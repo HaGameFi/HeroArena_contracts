@@ -16,7 +16,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
     using SafeERC20 for IERC20;
 
-    IERC20 hapToken;
+    IERC20 public HapToken;
 
     bytes32 public constant AVATAR_ROLE = keccak256("AVATAR_ROLE");
     bytes32 public constant POINT_ROLE = keccak256("POINT_ROLE");
@@ -71,8 +71,8 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
         _;
     }
 
-    constructor(IERC20 _hapToken, uint256 _feeToRegister, uint256 _feeToUpdate) Ownable(msg.sender) {
-        hapToken = _hapToken;
+    constructor(IERC20 _HapToken, uint256 _feeToRegister, uint256 _feeToUpdate) Ownable(msg.sender) {
+        HapToken = _HapToken;
         feeToRegister = _feeToRegister;
         feeToUpdate = _feeToUpdate;
 
@@ -157,7 +157,7 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
      * Claim fee to the admin
      */
     function claimFee(uint256 _amount) external onlyOwner {
-        hapToken.safeTransfer(msg.sender, _amount);
+        HapToken.safeTransfer(msg.sender, _amount);
     }
 
     /**
@@ -202,7 +202,7 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
         _teamMapping[_teamId].numberOfUsers += 1;
 
         // Transfer HAP tokens to this contract
-        hapToken.safeTransferFrom(msg.sender, address(this), feeToRegister);
+        HapToken.safeTransferFrom(msg.sender, address(this), feeToRegister);
 
         // emit event
         emit UserNew(msg.sender, _teamId);
@@ -228,7 +228,7 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
 
         // Interactions（后执行外部调用）
         _avatarToken.safeTransferFrom(msg.sender, address(this), _tokenId);
-        hapToken.safeTransferFrom(msg.sender, address(this), feeToUpdate);
+        HapToken.safeTransferFrom(msg.sender, address(this), feeToUpdate);
 
         if (_previousAvatarAddress != address(0)) {
             IERC721(_previousAvatarAddress).safeTransferFrom(address(this), msg.sender, _previousTokenId);
