@@ -22,14 +22,25 @@ contract HeroArenaAvatarsTest is Test {
 
         avatars = new HeroArenaAvatars();
         avatars.setAvatarNameAndCreatedTimestamp(0, "Knight_v0");
-        avatars.setAvatarNameAndCreatedTimestamp(1, "Knight_v1");
+        avatars.setAvatarNameAndCreatedTimestamp(1, "Mage_v1");
     }
 
     // ─── helpers ──────────────────────────────────────────────────────────────
 
-    function _ids(uint8 id) internal pure returns (uint8[] memory ids) {
-        ids = new uint8[](1);
-        ids[0] = id;
+    function _ids1(uint8 a) internal pure returns (uint8[] memory r) {
+        r = new uint8[](1); r[0] = a;
+    }
+
+    function _ids2(uint8 a, uint8 b) internal pure returns (uint8[] memory r) {
+        r = new uint8[](2); r[0] = a; r[1] = b;
+    }
+
+    function _tokenIds1(uint256 a) internal pure returns (uint256[] memory r) {
+        r = new uint256[](1); r[0] = a;
+    }
+
+    function _tokenIds2(uint256 a, uint256 b) internal pure returns (uint256[] memory r) {
+        r = new uint256[](2); r[0] = a; r[1] = b;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -82,10 +93,10 @@ contract HeroArenaAvatarsTest is Test {
     }
 
     function test_Mint_SequentialTokenIds() public {
-        uint256 tokenId1 = avatars.mint(user1, 0);
-        uint256 tokenId2 = avatars.mint(user1, 1);
-        assertEq(tokenId1, 1);
-        assertEq(tokenId2, 2);
+        uint256 id1 = avatars.mint(user1, 0);
+        uint256 id2 = avatars.mint(user1, 1);
+        assertEq(id1, 1);
+        assertEq(id2, 2);
     }
 
     function test_Mint_SetsOwner() public {
@@ -97,6 +108,13 @@ contract HeroArenaAvatarsTest is Test {
         avatars.mint(user1, 0);
         avatars.mint(user2, 0);
         assertEq(avatars.avatarCount(0), 2);
+    }
+
+    function test_Mint_DifferentAvatarIdsCounted() public {
+        avatars.mint(user1, 0);
+        avatars.mint(user1, 1);
+        assertEq(avatars.avatarCount(0), 1);
+        assertEq(avatars.avatarCount(1), 1);
     }
 
     function test_Mint_IncrementsTotalSupply() public {
@@ -117,19 +135,20 @@ contract HeroArenaAvatarsTest is Test {
 
     function test_SetAvatarName_SetsName() public {
         avatars.setAvatarNameAndCreatedTimestamp(5, "Wizard_v1");
-        (string[] memory names,) = avatars.getAvatarNameAndCreatedTimestampsBatch(_ids(5));
+        (string[] memory names, ) = avatars.getAvatarNameAndCreatedTimestampBatch(_ids1(5));
         assertEq(names[0], "Wizard_v1");
     }
 
     function test_SetAvatarName_SetsTimestamp() public {
+        vm.warp(12345);
         avatars.setAvatarNameAndCreatedTimestamp(5, "Wizard_v1");
-        (, uint256[] memory timestamps) = avatars.getAvatarNameAndCreatedTimestampsBatch(_ids(5));
-        assertEq(timestamps[0], block.timestamp);
+        (, uint256[] memory timestamps) = avatars.getAvatarNameAndCreatedTimestampBatch(_ids1(5));
+        assertEq(timestamps[0], 12345);
     }
 
     function test_SetAvatarName_CanOverwrite() public {
         avatars.setAvatarNameAndCreatedTimestamp(0, "Knight_v0_updated");
-        (string[] memory names,) = avatars.getAvatarNameAndCreatedTimestampsBatch(_ids(0));
+        (string[] memory names, ) = avatars.getAvatarNameAndCreatedTimestampBatch(_ids1(0));
         assertEq(names[0], "Knight_v0_updated");
     }
 
@@ -170,6 +189,13 @@ contract HeroArenaAvatarsTest is Test {
         avatars.ownerOf(tokenId);
     }
 
+    function test_Burn_ClearsAvatarIdMapping() public {
+        uint256 tokenId = avatars.mint(user1, 3);
+        avatars.burn(tokenId);
+        uint8[] memory result = avatars.getAvatarIdBatch(_tokenIds1(tokenId));
+        assertEq(result[0], 0);
+    }
+
     function test_Burn_MultipleBurns() public {
         uint256 tokenId1 = avatars.mint(user1, 0);
         uint256 tokenId2 = avatars.mint(user2, 0);
@@ -193,34 +219,57 @@ contract HeroArenaAvatarsTest is Test {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // getAvatarNameAndCreatedTimestampsBatch
+    // getAvatarIdBatch
     // ═══════════════════════════════════════════════════════════════════════════
 
-    function test_GetBatch_ReturnsCorrectData() public view {
-        uint8[] memory ids = new uint8[](2);
-        ids[0] = 0;
-        ids[1] = 1;
+    function test_GetAvatarIdBatch_Single() public {
+        uint256 tokenId = avatars.mint(user1, 3);
+        uint8[] memory result = avatars.getAvatarIdBatch(_tokenIds1(tokenId));
+        assertEq(result.length, 1);
+        assertEq(result[0], 3);
+    }
+
+    function test_GetAvatarIdBatch_Multiple() public {
+        uint256 tokenId1 = avatars.mint(user1, 1);
+        uint256 tokenId2 = avatars.mint(user2, 5);
+        uint8[] memory result = avatars.getAvatarIdBatch(_tokenIds2(tokenId1, tokenId2));
+        assertEq(result.length, 2);
+        assertEq(result[0], 1);
+        assertEq(result[1], 5);
+    }
+
+    function test_GetAvatarIdBatch_EmptyInput() public view {
+        uint256[] memory empty = new uint256[](0);
+        uint8[] memory result = avatars.getAvatarIdBatch(empty);
+        assertEq(result.length, 0);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // getAvatarNameAndCreatedTimestampBatch
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    function test_GetNameBatch_ReturnsCorrectData() public view {
         (string[] memory names, uint256[] memory timestamps) =
-            avatars.getAvatarNameAndCreatedTimestampsBatch(ids);
+            avatars.getAvatarNameAndCreatedTimestampBatch(_ids2(0, 1));
         assertEq(names[0], "Knight_v0");
-        assertEq(names[1], "Knight_v1");
+        assertEq(names[1], "Mage_v1");
         assertEq(timestamps.length, 2);
     }
 
-    function test_GetBatch_ReturnsEmptyStringForUnsetId() public view {
-        (string[] memory names,) = avatars.getAvatarNameAndCreatedTimestampsBatch(_ids(99));
+    function test_GetNameBatch_ReturnsEmptyStringForUnsetId() public view {
+        (string[] memory names, ) = avatars.getAvatarNameAndCreatedTimestampBatch(_ids1(99));
         assertEq(names[0], "");
     }
 
-    function test_GetBatch_RevertsIfLengthExceeds1000() public {
+    function test_GetNameBatch_RevertsIfLengthExceeds1000() public {
         uint8[] memory ids = new uint8[](1001);
         vm.expectRevert("Group size must be < 1001");
-        avatars.getAvatarNameAndCreatedTimestampsBatch(ids);
+        avatars.getAvatarNameAndCreatedTimestampBatch(ids);
     }
 
-    function test_GetBatch_AllowsExactly1000() public view {
+    function test_GetNameBatch_AllowsExactly1000() public view {
         uint8[] memory ids = new uint8[](1000);
-        avatars.getAvatarNameAndCreatedTimestampsBatch(ids);
+        avatars.getAvatarNameAndCreatedTimestampBatch(ids);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -253,9 +302,22 @@ contract HeroArenaAvatarsTest is Test {
         assertEq(tokens[0], tokenId2);
     }
 
+    function test_GetTokensByOwner_UpdatesAfterTransfer() public {
+        uint256 tokenId = avatars.mint(user1, 0);
+        vm.prank(user1);
+        avatars.transferFrom(user1, user2, tokenId);
+
+        assertEq(avatars.getTokensByOwner(user1).length, 0);
+        assertEq(avatars.getTokensByOwner(user2).length, 1);
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // ERC721Enumerable
     // ═══════════════════════════════════════════════════════════════════════════
+
+    function test_TotalSupply_ZeroInitially() public view {
+        assertEq(avatars.totalSupply(), 0);
+    }
 
     function test_TokenByIndex_ReturnsCorrectToken() public {
         uint256 tokenId = avatars.mint(user1, 0);
@@ -267,7 +329,5 @@ contract HeroArenaAvatarsTest is Test {
         assertEq(avatars.tokenOfOwnerByIndex(user1, 0), tokenId);
     }
 
-    function test_TotalSupply_ZeroInitially() public view {
-        assertEq(avatars.totalSupply(), 0);
-    }
+    receive() external payable {}
 }

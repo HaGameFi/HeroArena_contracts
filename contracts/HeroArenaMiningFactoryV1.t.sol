@@ -62,14 +62,14 @@ contract HeroArenaMiningFactoryV1Test is Test {
     function test_Constructor_InitializesFirstAvatarName() public view {
         uint8[] memory ids = new uint8[](1);
         ids[0] = 0;
-        (string[] memory names,) = avatarsSC.getAvatarNameAndCreatedTimestampsBatch(ids);
+        (string[] memory names,) = avatarsSC.getAvatarNameAndCreatedTimestampBatch(ids);
         assertEq(names[0], "Knight_v0");
     }
 
     function test_Constructor_InitializesLastAvatarName() public view {
         uint8[] memory ids = new uint8[](1);
         ids[0] = 18;
-        (string[] memory names,) = avatarsSC.getAvatarNameAndCreatedTimestampsBatch(ids);
+        (string[] memory names,) = avatarsSC.getAvatarNameAndCreatedTimestampBatch(ids);
         assertEq(names[0], "Ninja_v2");
     }
 

@@ -67,18 +67,29 @@ contract HeroArenaAvatars is ERC721Enumerable, Ownable {
     }
 
     /**
+     * Get avatarIds for a group of specific tokenId.
+     */
+    function getAvatarIdBatch(uint256[] calldata _tokenIds) external view returns (uint8[] memory) {
+        uint8[] memory _Ids = new uint8[](_tokenIds.length);
+        for (uint256 i = 0; i < _tokenIds.length; i++) {
+            _Ids[i] = _avatarIds[_tokenIds[i]];
+        }
+        return _Ids;
+    }
+
+    /**
      * To get a group of avatars' names and timestamps
      */
-    function getAvatarNameAndCreatedTimestampsBatch(uint8[] calldata _Ids) external view returns (string[] memory, uint256[] memory) {
+    function getAvatarNameAndCreatedTimestampBatch(uint8[] calldata _Ids) external view returns (string[] memory, uint256[] memory) {
         require(_Ids.length < 1001, "Group size must be < 1001");
         
-        string[] memory names = new string[](_Ids.length);
-        uint256[] memory timestamps = new uint256[](_Ids.length);
+        string[] memory _names = new string[](_Ids.length);
+        uint256[] memory _timestamps = new uint256[](_Ids.length);
         for (uint256 i = 0; i < _Ids.length; i++) {
-            names[i] = _avatarNames[_Ids[i]];
-            timestamps[i] = _avatarCreatedTimestamps[_Ids[i]];
+            _names[i] = _avatarNames[_Ids[i]];
+            _timestamps[i] = _avatarCreatedTimestamps[_Ids[i]];
         }
-        return (names, timestamps);
+        return (_names, _timestamps);
     }
 
     /**

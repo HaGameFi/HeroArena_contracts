@@ -63,13 +63,13 @@ describe("HeroArenaMiningFactoryV1", async function () {
 
     it("initializes Knight_v0 as first avatar", async function () {
       const { avatarsSC } = await deployAll();
-      const [names] = await avatarsSC.read.getAvatarNameAndCreatedTimestampsBatch([[0]]);
+      const [names] = await avatarsSC.read.getAvatarNameAndCreatedTimestampBatch([[0]]);
       assert.equal(names[0], "Knight_v0");
     });
 
     it("initializes Ninja_v2 as last avatar", async function () {
       const { avatarsSC } = await deployAll();
-      const [names] = await avatarsSC.read.getAvatarNameAndCreatedTimestampsBatch([[18]]);
+      const [names] = await avatarsSC.read.getAvatarNameAndCreatedTimestampBatch([[18]]);
       assert.equal(names[0], "Ninja_v2");
     });
 
