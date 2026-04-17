@@ -126,7 +126,7 @@ contract HeroArenaMiningFactoryV1 is Ownable {
         HeroArenaAvatarsSC.setAvatarNameAndCreatedTimestamp(89, "Medic_v1");
 
         // Other parameters initialized
-        numberOfAvatars = 19;
+        numberOfAvatars = 90;
     }
 
     /**
