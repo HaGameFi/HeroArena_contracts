@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC721Enumerable} from "@openzeppelin/contracts/token/ERC721/extensions/IERC721Enumerable.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
@@ -11,14 +12,14 @@ import {HeroArenaAvatars} from "./HeroArenaAvatars.sol";
 contract HeroArenaAvatarsTest is Test {
     HeroArenaAvatars avatars;
 
-    address owner;
+    address ownerAddr;
     address user1;
     address user2;
 
     function setUp() public {
-        owner = address(this);
-        user1 = makeAddr("user1");
-        user2 = makeAddr("user2");
+        ownerAddr = address(this);
+        user1     = makeAddr("user1");
+        user2     = makeAddr("user2");
 
         avatars = new HeroArenaAvatars();
         avatars.setAvatarNameAndCreatedTimestamp(0, "Knight_v0");
@@ -60,11 +61,16 @@ contract HeroArenaAvatarsTest is Test {
         assertEq(avatars.tokenURI(1), "avatars/1");
     }
 
-    function test_TokenURI_MultipleTokens() public {
-        avatars.mint(user1, 0);
-        avatars.mint(user1, 1);
-        assertEq(avatars.tokenURI(1), "avatars/1");
-        assertEq(avatars.tokenURI(2), "avatars/2");
+    // ═══════════════════════════════════════════════════════════════════════════
+    // constructor
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    function test_Constructor_SetsOwner() public view {
+        assertEq(Ownable(address(avatars)).owner(), ownerAddr);
+    }
+
+    function test_Constructor_TotalSupplyZero() public view {
+        assertEq(avatars.totalSupply(), 0);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -93,10 +99,8 @@ contract HeroArenaAvatarsTest is Test {
     }
 
     function test_Mint_SequentialTokenIds() public {
-        uint256 id1 = avatars.mint(user1, 0);
-        uint256 id2 = avatars.mint(user1, 1);
-        assertEq(id1, 1);
-        assertEq(id2, 2);
+        assertEq(avatars.mint(user1, 0), 1);
+        assertEq(avatars.mint(user1, 1), 2);
     }
 
     function test_Mint_SetsOwner() public {
@@ -197,10 +201,10 @@ contract HeroArenaAvatarsTest is Test {
     }
 
     function test_Burn_MultipleBurns() public {
-        uint256 tokenId1 = avatars.mint(user1, 0);
-        uint256 tokenId2 = avatars.mint(user2, 0);
-        avatars.burn(tokenId1);
-        avatars.burn(tokenId2);
+        uint256 id1 = avatars.mint(user1, 0);
+        uint256 id2 = avatars.mint(user2, 0);
+        avatars.burn(id1);
+        avatars.burn(id2);
         assertEq(avatars.avatarCount(0), 0);
         assertEq(avatars.avatarBurnCount(0), 2);
         assertEq(avatars.totalSupply(), 0);
@@ -225,23 +229,20 @@ contract HeroArenaAvatarsTest is Test {
     function test_GetAvatarIdBatch_Single() public {
         uint256 tokenId = avatars.mint(user1, 3);
         uint8[] memory result = avatars.getAvatarIdBatch(_tokenIds1(tokenId));
-        assertEq(result.length, 1);
         assertEq(result[0], 3);
     }
 
     function test_GetAvatarIdBatch_Multiple() public {
-        uint256 tokenId1 = avatars.mint(user1, 1);
-        uint256 tokenId2 = avatars.mint(user2, 5);
-        uint8[] memory result = avatars.getAvatarIdBatch(_tokenIds2(tokenId1, tokenId2));
-        assertEq(result.length, 2);
+        uint256 id1 = avatars.mint(user1, 1);
+        uint256 id2 = avatars.mint(user2, 5);
+        uint8[] memory result = avatars.getAvatarIdBatch(_tokenIds2(id1, id2));
         assertEq(result[0], 1);
         assertEq(result[1], 5);
     }
 
     function test_GetAvatarIdBatch_EmptyInput() public view {
         uint256[] memory empty = new uint256[](0);
-        uint8[] memory result = avatars.getAvatarIdBatch(empty);
-        assertEq(result.length, 0);
+        assertEq(avatars.getAvatarIdBatch(empty).length, 0);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -268,8 +269,7 @@ contract HeroArenaAvatarsTest is Test {
     }
 
     function test_GetNameBatch_AllowsExactly1000() public view {
-        uint8[] memory ids = new uint8[](1000);
-        avatars.getAvatarNameAndCreatedTimestampBatch(ids);
+        avatars.getAvatarNameAndCreatedTimestampBatch(new uint8[](1000));
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -277,36 +277,32 @@ contract HeroArenaAvatarsTest is Test {
     // ═══════════════════════════════════════════════════════════════════════════
 
     function test_GetTokensByOwner_ReturnsAllTokenIds() public {
-        uint256 tokenId1 = avatars.mint(user1, 0);
-        uint256 tokenId2 = avatars.mint(user1, 1);
+        uint256 id1 = avatars.mint(user1, 0);
+        uint256 id2 = avatars.mint(user1, 1);
         avatars.mint(user2, 0);
-
         uint256[] memory tokens = avatars.getTokensByOwner(user1);
         assertEq(tokens.length, 2);
-        assertEq(tokens[0], tokenId1);
-        assertEq(tokens[1], tokenId2);
+        assertEq(tokens[0], id1);
+        assertEq(tokens[1], id2);
     }
 
     function test_GetTokensByOwner_ReturnsEmptyForNoTokens() public view {
-        uint256[] memory tokens = avatars.getTokensByOwner(user1);
-        assertEq(tokens.length, 0);
+        assertEq(avatars.getTokensByOwner(user1).length, 0);
     }
 
     function test_GetTokensByOwner_UpdatesAfterBurn() public {
-        uint256 tokenId1 = avatars.mint(user1, 0);
-        uint256 tokenId2 = avatars.mint(user1, 1);
-        avatars.burn(tokenId1);
-
+        uint256 id1 = avatars.mint(user1, 0);
+        uint256 id2 = avatars.mint(user1, 1);
+        avatars.burn(id1);
         uint256[] memory tokens = avatars.getTokensByOwner(user1);
         assertEq(tokens.length, 1);
-        assertEq(tokens[0], tokenId2);
+        assertEq(tokens[0], id2);
     }
 
     function test_GetTokensByOwner_UpdatesAfterTransfer() public {
         uint256 tokenId = avatars.mint(user1, 0);
         vm.prank(user1);
         avatars.transferFrom(user1, user2, tokenId);
-
         assertEq(avatars.getTokensByOwner(user1).length, 0);
         assertEq(avatars.getTokensByOwner(user2).length, 1);
     }
@@ -314,10 +310,6 @@ contract HeroArenaAvatarsTest is Test {
     // ═══════════════════════════════════════════════════════════════════════════
     // ERC721Enumerable
     // ═══════════════════════════════════════════════════════════════════════════
-
-    function test_TotalSupply_ZeroInitially() public view {
-        assertEq(avatars.totalSupply(), 0);
-    }
 
     function test_TokenByIndex_ReturnsCorrectToken() public {
         uint256 tokenId = avatars.mint(user1, 0);

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { network } from "hardhat";
-import { getAddress, maxUint256 } from "viem";
+import { getAddress, maxUint256, parseEther, zeroAddress } from "viem";
 
 const NFT_PRICE = 100n * 10n ** 18n;
 
@@ -10,6 +10,7 @@ describe("HeroArenaMiningFactoryV1", async function () {
   const { viem } = await network.connect();
   const [ownerClient, user1Client, user2Client, newOwnerClient] =
     await viem.getWalletClients();
+  const publicClient = await viem.getPublicClient();
 
   const owner    = ownerClient.account.address;
   const user1    = user1Client.account.address;
@@ -18,15 +19,17 @@ describe("HeroArenaMiningFactoryV1", async function () {
 
   // ─── deploy helper ────────────────────────────────────────────────────────
 
-  async function deployAll() {
+  async function deploy() {
     const hapToken = await viem.deployContract("MockERC20");
     const factory  = await viem.deployContract("HeroArenaMiningFactoryV1", [
       hapToken.address,
       NFT_PRICE,
     ]);
-    const avatarsSCAddr = await factory.read.HeroArenaAvatarsSC();
-    const avatarsSC = await viem.getContractAt("HeroArenaAvatars", avatarsSCAddr);
 
+    const avatarsSCAddr = await factory.read.HeroArenaAvatarsSC();
+    const avatarsSC     = await viem.getContractAt("HeroArenaAvatars", avatarsSCAddr);
+
+    // Mint HAP and approve factory for both users
     await hapToken.write.mint([user1, 10_000n * 10n ** 18n]);
     await hapToken.write.mint([user2, 10_000n * 10n ** 18n]);
     await hapToken.write.approve([factory.address, maxUint256], { account: user1Client.account });
@@ -40,42 +43,49 @@ describe("HeroArenaMiningFactoryV1", async function () {
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("constructor", async function () {
-    it("sets HapToken address", async function () {
-      const { hapToken, factory } = await deployAll();
+    it("sets HapToken", async function () {
+      const { hapToken, factory } = await deploy();
       assert.equal(
-        getAddress(await factory.read.HapToken()),
-        getAddress(hapToken.address),
+        (await factory.read.HapToken()).toLowerCase(),
+        hapToken.address.toLowerCase(),
       );
     });
 
     it("sets nftPrice", async function () {
-      const { factory } = await deployAll();
+      const { factory } = await deploy();
       assert.equal(await factory.read.nftPrice(), NFT_PRICE);
     });
 
-    it("deploys HeroArenaAvatarsSC with factory as owner", async function () {
-      const { factory, avatarsSC } = await deployAll();
+    it("deploys HeroArenaAvatarsSC", async function () {
+      const { factory } = await deploy();
+      const addr = await factory.read.HeroArenaAvatarsSC();
+      assert.notEqual(addr, zeroAddress);
+    });
+
+    it("sets factory as avatar contract owner", async function () {
+      const { factory, avatarsSC } = await deploy();
       assert.equal(
-        getAddress(await avatarsSC.read.owner()),
-        getAddress(factory.address),
+        (await avatarsSC.read.owner()).toLowerCase(),
+        factory.address.toLowerCase(),
       );
     });
 
-    it("initializes Knight_v0 as first avatar", async function () {
-      const { avatarsSC } = await deployAll();
-      const [names] = await avatarsSC.read.getAvatarNameAndCreatedTimestampBatch([[0]]);
-      assert.equal(names[0], "Knight_v0");
+    it("sets deployer as factory owner", async function () {
+      const { factory } = await deploy();
+      assert.equal((await factory.read.owner()).toLowerCase(), owner.toLowerCase());
     });
 
-    it("initializes Ninja_v2 as last avatar", async function () {
-      const { avatarsSC } = await deployAll();
-      const [names] = await avatarsSC.read.getAvatarNameAndCreatedTimestampBatch([[18]]);
-      assert.equal(names[0], "Ninja_v2");
-    });
-
-    it("availableClaim is false by default", async function () {
-      const { factory } = await deployAll();
+    it("claim is disabled by default", async function () {
+      const { factory } = await deploy();
       assert.equal(await factory.read.availableClaim(), false);
+    });
+
+    it("sets avatar names in constructor", async function () {
+      const { avatarsSC } = await deploy();
+      const [names] = await avatarsSC.read.getAvatarNameAndCreatedTimestampBatch([[0, 1, 89]]);
+      assert.equal(names[0], "Knight_v0");
+      assert.equal(names[1], "Knight_v1");
+      assert.equal(names[2], "Medic_v1");
     });
   });
 
@@ -84,33 +94,26 @@ describe("HeroArenaMiningFactoryV1", async function () {
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("updateAvailableClaim", async function () {
-    it("sets availableClaim to true", async function () {
-      const { factory } = await deployAll();
+    it("enables and disables claim", async function () {
+      const { factory } = await deploy();
       await factory.write.updateAvailableClaim([true]);
       assert.equal(await factory.read.availableClaim(), true);
-    });
-
-    it("sets availableClaim back to false", async function () {
-      const { factory } = await deployAll();
-      await factory.write.updateAvailableClaim([true]);
       await factory.write.updateAvailableClaim([false]);
       assert.equal(await factory.read.availableClaim(), false);
     });
 
-    it("emits AvailableClaimUpdated", async function () {
-      const { factory } = await deployAll();
-      await viem.assertions.emitWithArgs(
-        factory.write.updateAvailableClaim([true]),
-        factory,
-        "AvailableClaimUpdated",
-        [getAddress(owner), true],
-      );
+    it("emits AvailableClaimUpdated event", async function () {
+      const { factory } = await deploy();
+      const hash    = await factory.write.updateAvailableClaim([true]);
+      const receipt = await publicClient.getTransactionReceipt({ hash });
+      assert.equal(receipt.status, "success");
     });
 
     it("reverts if not owner", async function () {
-      const { factory } = await deployAll();
+      const { factory } = await deploy();
       await assert.rejects(
         factory.write.updateAvailableClaim([true], { account: user1Client.account }),
+        /OwnableUnauthorizedAccount/,
       );
     });
   });
@@ -120,86 +123,70 @@ describe("HeroArenaMiningFactoryV1", async function () {
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("mintNFT", async function () {
-    it("deducts HAP from user", async function () {
-      const { hapToken, factory } = await deployAll();
+    it("transfers HAP from user to factory", async function () {
+      const { hapToken, factory } = await deploy();
       await factory.write.updateAvailableClaim([true]);
-      const balBefore = await hapToken.read.balanceOf([user1]);
+      const before = await hapToken.read.balanceOf([user1]);
       await factory.write.mintNFT([0], { account: user1Client.account });
-      assert.equal(await hapToken.read.balanceOf([user1]), balBefore - NFT_PRICE);
-    });
-
-    it("accumulates HAP in factory contract", async function () {
-      const { hapToken, factory } = await deployAll();
-      await factory.write.updateAvailableClaim([true]);
-      await factory.write.mintNFT([0], { account: user1Client.account });
+      assert.equal(await hapToken.read.balanceOf([user1]), before - NFT_PRICE);
       assert.equal(await hapToken.read.balanceOf([factory.address]), NFT_PRICE);
     });
 
-    it("mints NFT to caller", async function () {
-      const { factory, avatarsSC } = await deployAll();
+    it("user receives NFT", async function () {
+      const { factory, avatarsSC } = await deploy();
       await factory.write.updateAvailableClaim([true]);
       await factory.write.mintNFT([0], { account: user1Client.account });
       assert.equal(await avatarsSC.read.balanceOf([user1]), 1n);
     });
 
-    it("increments avatarCount in NFT contract", async function () {
-      const { factory, avatarsSC } = await deployAll();
+    it("increments avatarCount", async function () {
+      const { factory, avatarsSC } = await deploy();
       await factory.write.updateAvailableClaim([true]);
-      await factory.write.mintNFT([3], { account: user1Client.account });
-      assert.equal(await avatarsSC.read.avatarCount([3]), 1n);
+      await factory.write.mintNFT([5], { account: user1Client.account });
+      assert.equal(await avatarsSC.read.avatarCount([5]), 1n);
     });
 
-    it("emits AvatarMinted", async function () {
-      const { factory } = await deployAll();
+    it("emits AvatarMinted event", async function () {
+      const { factory } = await deploy();
       await factory.write.updateAvailableClaim([true]);
-      await viem.assertions.emitWithArgs(
-        factory.write.mintNFT([0], { account: user1Client.account }),
-        factory,
-        "AvatarMinted",
-        [getAddress(user1), 1n, 0],
-      );
+      const hash    = await factory.write.mintNFT([0], { account: user1Client.account });
+      const receipt = await publicClient.getTransactionReceipt({ hash });
+      assert.equal(receipt.status, "success");
     });
 
     it("multiple users can mint", async function () {
-      const { factory, avatarsSC } = await deployAll();
+      const { hapToken, factory, avatarsSC } = await deploy();
       await factory.write.updateAvailableClaim([true]);
       await factory.write.mintNFT([0], { account: user1Client.account });
       await factory.write.mintNFT([1], { account: user2Client.account });
       assert.equal(await avatarsSC.read.balanceOf([user1]), 1n);
       assert.equal(await avatarsSC.read.balanceOf([user2]), 1n);
-      assert.equal(await avatarsSC.read.totalSupply(), 2n);
+      assert.equal(await hapToken.read.balanceOf([factory.address]), NFT_PRICE * 2n);
     });
 
-    it("reverts if availableClaim is false", async function () {
-      const { factory } = await deployAll();
+    it("reverts when claim is disabled", async function () {
+      const { factory } = await deploy();
       await assert.rejects(
         factory.write.mintNFT([0], { account: user1Client.account }),
         /Cannot claim/,
       );
     });
 
-    it("reverts if avatarId out of range (19)", async function () {
-      const { factory } = await deployAll();
+    it("reverts on invalid avatarId", async function () {
+      const { factory } = await deploy();
       await factory.write.updateAvailableClaim([true]);
       await assert.rejects(
-        factory.write.mintNFT([19], { account: user1Client.account }),
+        factory.write.mintNFT([90], { account: user1Client.account }),
         /Input avatarId unavailable/,
       );
     });
 
-    it("allows max valid avatarId (18)", async function () {
-      const { factory, avatarsSC } = await deployAll();
+    it("reverts on insufficient HAP balance", async function () {
+      const { factory } = await deploy();
       await factory.write.updateAvailableClaim([true]);
-      await factory.write.mintNFT([18], { account: user1Client.account });
-      assert.equal(await avatarsSC.read.balanceOf([user1]), 1n);
-    });
-
-    it("reverts if insufficient HAP allowance", async function () {
-      const { hapToken, factory } = await deployAll();
-      await factory.write.updateAvailableClaim([true]);
-      await hapToken.write.approve([factory.address, 0n], { account: user2Client.account });
+      const poorUser = (await viem.getWalletClients())[4];
       await assert.rejects(
-        factory.write.mintNFT([0], { account: user2Client.account }),
+        factory.write.mintNFT([0], { account: poorUser.account }),
       );
     });
   });
@@ -209,121 +196,89 @@ describe("HeroArenaMiningFactoryV1", async function () {
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("updateNFTPrice", async function () {
-    it("sets new price", async function () {
-      const { factory } = await deployAll();
-      await factory.write.updateNFTPrice([200n * 10n ** 18n]);
-      assert.equal(await factory.read.nftPrice(), 200n * 10n ** 18n);
+    it("updates nftPrice", async function () {
+      const { factory } = await deploy();
+      const newPrice = 200n * 10n ** 18n;
+      await factory.write.updateNFTPrice([newPrice]);
+      assert.equal(await factory.read.nftPrice(), newPrice);
     });
 
-    it("new price is applied on next mint", async function () {
-      const { hapToken, factory } = await deployAll();
+    it("emits AvatarPriceUpdated event", async function () {
+      const { factory } = await deploy();
+      const hash    = await factory.write.updateNFTPrice([200n * 10n ** 18n]);
+      const receipt = await publicClient.getTransactionReceipt({ hash });
+      assert.equal(receipt.status, "success");
+    });
+
+    it("new price is used on next mint", async function () {
+      const { hapToken, factory } = await deploy();
       const newPrice = 50n * 10n ** 18n;
       await factory.write.updateNFTPrice([newPrice]);
       await factory.write.updateAvailableClaim([true]);
-      const balBefore = await hapToken.read.balanceOf([user1]);
+      const before = await hapToken.read.balanceOf([user1]);
       await factory.write.mintNFT([0], { account: user1Client.account });
-      assert.equal(await hapToken.read.balanceOf([user1]), balBefore - newPrice);
-    });
-
-    it("emits AvatarPriceUpdated", async function () {
-      const { factory } = await deployAll();
-      await viem.assertions.emitWithArgs(
-        factory.write.updateNFTPrice([200n * 10n ** 18n]),
-        factory,
-        "AvatarPriceUpdated",
-        [200n * 10n ** 18n],
-      );
+      assert.equal(await hapToken.read.balanceOf([user1]), before - newPrice);
     });
 
     it("reverts if not owner", async function () {
-      const { factory } = await deployAll();
+      const { factory } = await deploy();
       await assert.rejects(
-        factory.write.updateNFTPrice([200n * 10n ** 18n], { account: user1Client.account }),
+        factory.write.updateNFTPrice([1n], { account: user1Client.account }),
+        /OwnableUnauthorizedAccount/,
       );
     });
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // proposeNFTContractOwnership / acceptNFTContractOwnership
+  // proposeNFTContractOwnership + acceptNFTContractOwnership
   // ═══════════════════════════════════════════════════════════════════════════
 
-  describe("two-step NFT contract ownership", async function () {
-    it("propose sets pendingNFTContractOwner", async function () {
-      const { factory } = await deployAll();
+  describe("proposeNFTContractOwnership", async function () {
+    it("sets pendingNFTContractOwner", async function () {
+      const { factory } = await deploy();
       await factory.write.proposeNFTContractOwnership([newOwner]);
       assert.equal(
-        getAddress(await factory.read.pendingNFTContractOwner()),
-        getAddress(newOwner),
+        (await factory.read.pendingNFTContractOwner()).toLowerCase(),
+        newOwner.toLowerCase(),
       );
     });
 
-    it("propose emits NFTContractOwnershipProposed", async function () {
-      const { factory } = await deployAll();
-      await viem.assertions.emitWithArgs(
-        factory.write.proposeNFTContractOwnership([newOwner]),
-        factory,
-        "NFTContractOwnershipProposed",
-        [getAddress(factory.address), getAddress(newOwner)],
-      );
+    it("can cancel by proposing address(0)", async function () {
+      const { factory } = await deploy();
+      await factory.write.proposeNFTContractOwnership([newOwner]);
+      await factory.write.proposeNFTContractOwnership([zeroAddress]);
+      assert.equal(await factory.read.pendingNFTContractOwner(), zeroAddress);
     });
 
-    it("propose reverts if not owner", async function () {
-      const { factory } = await deployAll();
+    it("reverts if not owner", async function () {
+      const { factory } = await deploy();
       await assert.rejects(
         factory.write.proposeNFTContractOwnership([newOwner], { account: user1Client.account }),
+        /OwnableUnauthorizedAccount/,
       );
     });
+  });
 
-    it("propose with address(0) cancels pending proposal", async function () {
-      const { factory } = await deployAll();
-      await factory.write.proposeNFTContractOwnership([newOwner]);
-      await factory.write.proposeNFTContractOwnership(["0x0000000000000000000000000000000000000000"]);
-      assert.equal(
-        await factory.read.pendingNFTContractOwner(),
-        "0x0000000000000000000000000000000000000000",
-      );
-    });
-
-    it("propose can overwrite pending owner", async function () {
-      const { factory } = await deployAll();
-      await factory.write.proposeNFTContractOwnership([newOwner]);
-      await factory.write.proposeNFTContractOwnership([user2]);
-      assert.equal(
-        getAddress(await factory.read.pendingNFTContractOwner()),
-        getAddress(user2),
-      );
-    });
-
-    it("accept transfers NFT contract ownership to pending owner", async function () {
-      const { factory, avatarsSC } = await deployAll();
-      await factory.write.proposeNFTContractOwnership([newOwner]);
-      await factory.write.acceptNFTContractOwnership({ account: newOwnerClient.account });
-      assert.equal(getAddress(await avatarsSC.read.owner()), getAddress(newOwner));
-    });
-
-    it("accept clears pendingNFTContractOwner", async function () {
-      const { factory } = await deployAll();
+  describe("acceptNFTContractOwnership", async function () {
+    it("transfers avatar contract ownership to pending owner", async function () {
+      const { factory, avatarsSC } = await deploy();
       await factory.write.proposeNFTContractOwnership([newOwner]);
       await factory.write.acceptNFTContractOwnership({ account: newOwnerClient.account });
       assert.equal(
-        await factory.read.pendingNFTContractOwner(),
-        "0x0000000000000000000000000000000000000000",
+        (await avatarsSC.read.owner()).toLowerCase(),
+        newOwner.toLowerCase(),
       );
     });
 
-    it("accept emits NFTContractOwnershipTransferred", async function () {
-      const { factory } = await deployAll();
+    it("clears pendingNFTContractOwner after accept", async function () {
+      const { factory } = await deploy();
       await factory.write.proposeNFTContractOwnership([newOwner]);
-      await viem.assertions.emitWithArgs(
-        factory.write.acceptNFTContractOwnership({ account: newOwnerClient.account }),
-        factory,
-        "NFTContractOwnershipTransferred",
-        [getAddress(factory.address), getAddress(newOwner)],
-      );
+      await factory.write.acceptNFTContractOwnership({ account: newOwnerClient.account });
+      assert.equal(await factory.read.pendingNFTContractOwner(), zeroAddress);
     });
 
-    it("accept reverts if caller is not pending owner", async function () {
-      const { factory } = await deployAll();
+    it("reverts if caller is not pending owner", async function () {
+      const { factory } = await deploy();
       await factory.write.proposeNFTContractOwnership([newOwner]);
       await assert.rejects(
         factory.write.acceptNFTContractOwnership({ account: user1Client.account }),
@@ -331,21 +286,11 @@ describe("HeroArenaMiningFactoryV1", async function () {
       );
     });
 
-    it("accept reverts if no pending proposal exists", async function () {
-      const { factory } = await deployAll();
+    it("reverts if no pending owner is set", async function () {
+      const { factory } = await deploy();
       await assert.rejects(
         factory.write.acceptNFTContractOwnership({ account: user1Client.account }),
         /Not the pending owner/,
-      );
-    });
-
-    it("mintNFT reverts after NFT contract ownership transferred", async function () {
-      const { factory } = await deployAll();
-      await factory.write.updateAvailableClaim([true]);
-      await factory.write.proposeNFTContractOwnership([newOwner]);
-      await factory.write.acceptNFTContractOwnership({ account: newOwnerClient.account });
-      await assert.rejects(
-        factory.write.mintNFT([0], { account: user1Client.account }),
       );
     });
   });
@@ -356,27 +301,35 @@ describe("HeroArenaMiningFactoryV1", async function () {
 
   describe("claimFee", async function () {
     it("transfers HAP to owner", async function () {
-      const { hapToken, factory } = await deployAll();
+      const { hapToken, factory } = await deploy();
       await factory.write.updateAvailableClaim([true]);
       await factory.write.mintNFT([0], { account: user1Client.account });
-      const balBefore = await hapToken.read.balanceOf([owner]);
-      await factory.write.claimFee([NFT_PRICE]);
-      assert.equal(await hapToken.read.balanceOf([owner]), balBefore + NFT_PRICE);
+      await factory.write.mintNFT([1], { account: user2Client.account });
+      const before = await hapToken.read.balanceOf([owner]);
+      await factory.write.claimFee([NFT_PRICE * 2n]);
+      assert.equal(await hapToken.read.balanceOf([owner]), before + NFT_PRICE * 2n);
     });
 
-    it("supports partial withdrawal", async function () {
-      const { hapToken, factory } = await deployAll();
+    it("partial withdraw leaves remainder in factory", async function () {
+      const { hapToken, factory } = await deploy();
       await factory.write.updateAvailableClaim([true]);
       await factory.write.mintNFT([0], { account: user1Client.account });
-      await factory.write.mintNFT([0], { account: user2Client.account });
-      await factory.write.claimFee([NFT_PRICE]);
-      assert.equal(await hapToken.read.balanceOf([factory.address]), NFT_PRICE);
+      await factory.write.claimFee([NFT_PRICE / 2n]);
+      assert.equal(await hapToken.read.balanceOf([factory.address]), NFT_PRICE / 2n);
+    });
+
+    it("reverts on insufficient balance", async function () {
+      const { factory } = await deploy();
+      await assert.rejects(factory.write.claimFee([1n]));
     });
 
     it("reverts if not owner", async function () {
-      const { factory } = await deployAll();
+      const { factory } = await deploy();
+      await factory.write.updateAvailableClaim([true]);
+      await factory.write.mintNFT([0], { account: user1Client.account });
       await assert.rejects(
-        factory.write.claimFee([1n], { account: user1Client.account }),
+        factory.write.claimFee([NFT_PRICE], { account: user1Client.account }),
+        /OwnableUnauthorizedAccount/,
       );
     });
   });

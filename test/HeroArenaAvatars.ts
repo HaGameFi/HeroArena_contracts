@@ -38,7 +38,7 @@ describe("HeroArenaAvatars", async function () {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // ERC721 metadata
+  // metadata
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("metadata", async function () {
@@ -58,15 +58,21 @@ describe("HeroArenaAvatars", async function () {
       const tokenId = await getMintedTokenId(avatars, hash);
       assert.equal(await avatars.read.tokenURI([tokenId]), `avatars/${tokenId}`);
     });
+  });
 
-    it("tokenURI increments with each mint", async function () {
+  // ═══════════════════════════════════════════════════════════════════════════
+  // constructor
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("constructor", async function () {
+    it("sets owner", async function () {
       const { avatars } = await deploy();
-      const hash1 = await avatars.write.mint([user1, 0]);
-      const hash2 = await avatars.write.mint([user1, 1]);
-      const id1   = await getMintedTokenId(avatars, hash1);
-      const id2   = await getMintedTokenId(avatars, hash2);
-      assert.equal(await avatars.read.tokenURI([id1]), "avatars/1");
-      assert.equal(await avatars.read.tokenURI([id2]), "avatars/2");
+      assert.equal((await avatars.read.owner()).toLowerCase(), owner.toLowerCase());
+    });
+
+    it("total supply is zero initially", async function () {
+      const { avatars } = await deploy();
+      assert.equal(await avatars.read.totalSupply(), 0n);
     });
   });
 
@@ -98,8 +104,7 @@ describe("HeroArenaAvatars", async function () {
   describe("mint", async function () {
     it("tokenId starts at 1", async function () {
       const { avatars } = await deploy();
-      const hash    = await avatars.write.mint([user1, 0]);
-      const tokenId = await getMintedTokenId(avatars, hash);
+      const tokenId = await getMintedTokenId(avatars, await avatars.write.mint([user1, 0]));
       assert.equal(tokenId, 1n);
     });
 
@@ -113,8 +118,7 @@ describe("HeroArenaAvatars", async function () {
 
     it("sets NFT owner to recipient", async function () {
       const { avatars } = await deploy();
-      const hash    = await avatars.write.mint([user1, 0]);
-      const tokenId = await getMintedTokenId(avatars, hash);
+      const tokenId = await getMintedTokenId(avatars, await avatars.write.mint([user1, 0]));
       assert.equal(await avatars.read.ownerOf([tokenId]), getAddress(user1));
     });
 
@@ -170,7 +174,7 @@ describe("HeroArenaAvatars", async function () {
       assert.equal(timestamps[0], block.timestamp);
     });
 
-    it("can overwrite an existing name", async function () {
+    it("can overwrite existing name", async function () {
       const { avatars } = await deploy();
       await avatars.write.setAvatarNameAndCreatedTimestamp([0, "Knight_v0_updated"]);
       const [names] = await avatars.read.getAvatarNameAndCreatedTimestampBatch([[0]]);
@@ -196,16 +200,14 @@ describe("HeroArenaAvatars", async function () {
     it("decrements avatarCount", async function () {
       const { avatars } = await deploy();
       await avatars.write.mint([user1, 0]);
-      const hash    = await avatars.write.mint([user1, 0]);
-      const tokenId = await getMintedTokenId(avatars, hash);
-      await avatars.write.burn([tokenId]);
+      const id2 = await getMintedTokenId(avatars, await avatars.write.mint([user1, 0]));
+      await avatars.write.burn([id2]);
       assert.equal(await avatars.read.avatarCount([0]), 1n);
     });
 
     it("increments avatarBurnCount", async function () {
       const { avatars } = await deploy();
-      const hash    = await avatars.write.mint([user1, 0]);
-      const tokenId = await getMintedTokenId(avatars, hash);
+      const tokenId = await getMintedTokenId(avatars, await avatars.write.mint([user1, 0]));
       await avatars.write.burn([tokenId]);
       assert.equal(await avatars.read.avatarBurnCount([0]), 1n);
     });
@@ -213,16 +215,14 @@ describe("HeroArenaAvatars", async function () {
     it("decrements totalSupply", async function () {
       const { avatars } = await deploy();
       await avatars.write.mint([user1, 0]);
-      const hash    = await avatars.write.mint([user1, 0]);
-      const tokenId = await getMintedTokenId(avatars, hash);
-      await avatars.write.burn([tokenId]);
+      const id2 = await getMintedTokenId(avatars, await avatars.write.mint([user1, 0]));
+      await avatars.write.burn([id2]);
       assert.equal(await avatars.read.totalSupply(), 1n);
     });
 
     it("token no longer exists after burn", async function () {
       const { avatars } = await deploy();
-      const hash    = await avatars.write.mint([user1, 0]);
-      const tokenId = await getMintedTokenId(avatars, hash);
+      const tokenId = await getMintedTokenId(avatars, await avatars.write.mint([user1, 0]));
       await avatars.write.burn([tokenId]);
       await assert.rejects(avatars.read.ownerOf([tokenId]));
     });
@@ -240,8 +240,7 @@ describe("HeroArenaAvatars", async function () {
 
     it("reverts if not owner", async function () {
       const { avatars } = await deploy();
-      const hash    = await avatars.write.mint([user1, 0]);
-      const tokenId = await getMintedTokenId(avatars, hash);
+      const tokenId = await getMintedTokenId(avatars, await avatars.write.mint([user1, 0]));
       await assert.rejects(
         avatars.write.burn([tokenId], { account: user1Client.account }),
         /OwnableUnauthorizedAccount/,
@@ -261,10 +260,8 @@ describe("HeroArenaAvatars", async function () {
   describe("getAvatarIdBatch", async function () {
     it("returns correct avatarId for single token", async function () {
       const { avatars } = await deploy();
-      const hash    = await avatars.write.mint([user1, 3]);
-      const tokenId = await getMintedTokenId(avatars, hash);
-      const result  = await avatars.read.getAvatarIdBatch([[tokenId]]);
-      assert.equal(result[0], 3);
+      const tokenId = await getMintedTokenId(avatars, await avatars.write.mint([user1, 3]));
+      assert.equal((await avatars.read.getAvatarIdBatch([[tokenId]]))[0], 3);
     });
 
     it("returns correct avatarIds for multiple tokens", async function () {
@@ -278,8 +275,7 @@ describe("HeroArenaAvatars", async function () {
 
     it("returns empty array for empty input", async function () {
       const { avatars } = await deploy();
-      const result = await avatars.read.getAvatarIdBatch([[]]);
-      assert.equal(result.length, 0);
+      assert.equal((await avatars.read.getAvatarIdBatch([[]])).length, 0);
     });
   });
 
@@ -301,7 +297,7 @@ describe("HeroArenaAvatars", async function () {
       assert.equal(names[0], "");
     });
 
-    it("reverts if array length exceeds 1000", async function () {
+    it("reverts if length exceeds 1000", async function () {
       const { avatars } = await deploy();
       const ids = Array.from({ length: 1001 }, (_, i) => i % 256);
       await assert.rejects(
@@ -328,7 +324,6 @@ describe("HeroArenaAvatars", async function () {
       await avatars.write.mint([user1, 0]);
       await avatars.write.mint([user1, 1]);
       await avatars.write.mint([user2, 0]);
-
       const tokens = await avatars.read.getTokensByOwner([user1]);
       assert.equal(tokens.length, 2);
       assert.equal(tokens[0], 1n);
@@ -337,8 +332,7 @@ describe("HeroArenaAvatars", async function () {
 
     it("returns empty array for address with no tokens", async function () {
       const { avatars } = await deploy();
-      const tokens = await avatars.read.getTokensByOwner([user1]);
-      assert.equal(tokens.length, 0);
+      assert.equal((await avatars.read.getTokensByOwner([user1])).length, 0);
     });
 
     it("updates after burn", async function () {
@@ -346,7 +340,6 @@ describe("HeroArenaAvatars", async function () {
       const id1 = await getMintedTokenId(avatars, await avatars.write.mint([user1, 0]));
       await avatars.write.mint([user1, 1]);
       await avatars.write.burn([id1]);
-
       const tokens = await avatars.read.getTokensByOwner([user1]);
       assert.equal(tokens.length, 1);
       assert.equal(tokens[0], 2n);
@@ -356,7 +349,6 @@ describe("HeroArenaAvatars", async function () {
       const { avatars } = await deploy();
       const id = await getMintedTokenId(avatars, await avatars.write.mint([user1, 0]));
       await avatars.write.transferFrom([user1, user2, id], { account: user1Client.account });
-
       assert.equal((await avatars.read.getTokensByOwner([user1])).length, 0);
       assert.equal((await avatars.read.getTokensByOwner([user2])).length, 1);
     });
@@ -374,15 +366,13 @@ describe("HeroArenaAvatars", async function () {
 
     it("tokenByIndex returns correct token", async function () {
       const { avatars } = await deploy();
-      const hash    = await avatars.write.mint([user1, 0]);
-      const tokenId = await getMintedTokenId(avatars, hash);
+      const tokenId = await getMintedTokenId(avatars, await avatars.write.mint([user1, 0]));
       assert.equal(await avatars.read.tokenByIndex([0n]), tokenId);
     });
 
     it("tokenOfOwnerByIndex returns correct token", async function () {
       const { avatars } = await deploy();
-      const hash    = await avatars.write.mint([user1, 0]);
-      const tokenId = await getMintedTokenId(avatars, hash);
+      const tokenId = await getMintedTokenId(avatars, await avatars.write.mint([user1, 0]));
       assert.equal(await avatars.read.tokenOfOwnerByIndex([user1, 0n]), tokenId);
     });
   });

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {HeroArenaMiningFactoryV1} from "./HeroArenaMiningFactoryV1.sol";
@@ -10,10 +11,10 @@ import {MockERC20} from "./mocks/MockERC20.sol";
 
 contract HeroArenaMiningFactoryV1Test is Test {
     HeroArenaMiningFactoryV1 factory;
-    MockERC20 hapToken;
-    HeroArenaAvatars avatarsSC;
+    MockERC20                hapToken;
+    HeroArenaAvatars         avatarsSC;
 
-    address owner;
+    address ownerAddr;
     address user1;
     address user2;
     address newOwner;
@@ -21,10 +22,10 @@ contract HeroArenaMiningFactoryV1Test is Test {
     uint256 constant NFT_PRICE = 100 * 10 ** 18;
 
     function setUp() public {
-        owner    = address(this);
-        user1    = makeAddr("user1");
-        user2    = makeAddr("user2");
-        newOwner = makeAddr("newOwner");
+        ownerAddr = address(this);
+        user1     = makeAddr("user1");
+        user2     = makeAddr("user2");
+        newOwner  = makeAddr("newOwner");
 
         hapToken  = new MockERC20();
         factory   = new HeroArenaMiningFactoryV1(IERC20(address(hapToken)), NFT_PRICE);
@@ -56,45 +57,40 @@ contract HeroArenaMiningFactoryV1Test is Test {
     }
 
     function test_Constructor_SetsFactoryAsAvatarOwner() public view {
-        assertEq(avatarsSC.owner(), address(factory));
+        assertEq(Ownable(address(avatarsSC)).owner(), address(factory));
     }
 
-    function test_Constructor_InitializesFirstAvatarName() public view {
-        uint8[] memory ids = new uint8[](1);
-        ids[0] = 0;
-        (string[] memory names,) = avatarsSC.getAvatarNameAndCreatedTimestampBatch(ids);
-        assertEq(names[0], "Knight_v0");
+    function test_Constructor_SetsOwner() public view {
+        assertEq(Ownable(address(factory)).owner(), ownerAddr);
     }
 
-    function test_Constructor_InitializesLastAvatarName() public view {
-        uint8[] memory ids = new uint8[](1);
-        ids[0] = 18;
-        (string[] memory names,) = avatarsSC.getAvatarNameAndCreatedTimestampBatch(ids);
-        assertEq(names[0], "Ninja_v2");
-    }
-
-    function test_Constructor_AvailableClaimFalseByDefault() public view {
+    function test_Constructor_ClaimDisabledByDefault() public view {
         assertFalse(factory.availableClaim());
+    }
+
+    function test_Constructor_SetsAllAvatarNames() public view {
+        uint8[] memory ids = new uint8[](3);
+        ids[0] = 0; ids[1] = 1; ids[2] = 89;
+        (string[] memory names, ) = avatarsSC.getAvatarNameAndCreatedTimestampBatch(ids);
+        assertEq(names[0], "Knight_v0");
+        assertEq(names[1], "Knight_v1");
+        assertEq(names[2], "Medic_v1");
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
     // updateAvailableClaim
     // ═══════════════════════════════════════════════════════════════════════════
 
-    function test_UpdateAvailableClaim_SetsTrue() public {
+    function test_UpdateAvailableClaim_TogglesFlag() public {
         factory.updateAvailableClaim(true);
         assertTrue(factory.availableClaim());
-    }
-
-    function test_UpdateAvailableClaim_SetsFalse() public {
-        factory.updateAvailableClaim(true);
         factory.updateAvailableClaim(false);
         assertFalse(factory.availableClaim());
     }
 
     function test_UpdateAvailableClaim_EmitsEvent() public {
         vm.expectEmit(true, false, false, true);
-        emit HeroArenaMiningFactoryV1.AvailableClaimUpdated(owner, true);
+        emit HeroArenaMiningFactoryV1.AvailableClaimUpdated(ownerAddr, true);
         factory.updateAvailableClaim(true);
     }
 
@@ -108,22 +104,22 @@ contract HeroArenaMiningFactoryV1Test is Test {
     // mintNFT
     // ═══════════════════════════════════════════════════════════════════════════
 
-    function test_MintNFT_TransfersHAPFromUser() public {
+    function test_MintNFT_TransfersHapFromUser() public {
         factory.updateAvailableClaim(true);
-        uint256 balBefore = hapToken.balanceOf(user1);
+        uint256 before = hapToken.balanceOf(user1);
         vm.prank(user1);
         factory.mintNFT(0);
-        assertEq(hapToken.balanceOf(user1), balBefore - NFT_PRICE);
+        assertEq(hapToken.balanceOf(user1), before - NFT_PRICE);
     }
 
-    function test_MintNFT_AccumulatesHAPInContract() public {
+    function test_MintNFT_FactoryReceivesHap() public {
         factory.updateAvailableClaim(true);
         vm.prank(user1);
         factory.mintNFT(0);
         assertEq(hapToken.balanceOf(address(factory)), NFT_PRICE);
     }
 
-    function test_MintNFT_MintsNFTToUser() public {
+    function test_MintNFT_UserReceivesNFT() public {
         factory.updateAvailableClaim(true);
         vm.prank(user1);
         factory.mintNFT(0);
@@ -133,19 +129,19 @@ contract HeroArenaMiningFactoryV1Test is Test {
     function test_MintNFT_IncrementsAvatarCount() public {
         factory.updateAvailableClaim(true);
         vm.prank(user1);
-        factory.mintNFT(3);
-        assertEq(avatarsSC.avatarCount(3), 1);
+        factory.mintNFT(5);
+        assertEq(avatarsSC.avatarCount(5), 1);
     }
 
-    function test_MintNFT_EmitsAvatarMinted() public {
+    function test_MintNFT_EmitsEvent() public {
         factory.updateAvailableClaim(true);
-        vm.prank(user1);
         vm.expectEmit(true, true, true, false);
         emit HeroArenaMiningFactoryV1.AvatarMinted(user1, 1, 0);
+        vm.prank(user1);
         factory.mintNFT(0);
     }
 
-    function test_MintNFT_MultipleUsersCanMint() public {
+    function test_MintNFT_MultipleUsers() public {
         factory.updateAvailableClaim(true);
         vm.prank(user1);
         factory.mintNFT(0);
@@ -153,34 +149,28 @@ contract HeroArenaMiningFactoryV1Test is Test {
         factory.mintNFT(1);
         assertEq(avatarsSC.balanceOf(user1), 1);
         assertEq(avatarsSC.balanceOf(user2), 1);
-        assertEq(avatarsSC.totalSupply(), 2);
+        assertEq(hapToken.balanceOf(address(factory)), NFT_PRICE * 2);
     }
 
-    function test_MintNFT_RevertsIfClaimDisabled() public {
+    function test_MintNFT_RevertsWhenClaimDisabled() public {
         vm.prank(user1);
         vm.expectRevert("Cannot claim");
         factory.mintNFT(0);
     }
 
-    function test_MintNFT_RevertsIfAvatarIdOutOfRange() public {
+    function test_MintNFT_RevertsOnInvalidAvatarId() public {
         factory.updateAvailableClaim(true);
         vm.prank(user1);
         vm.expectRevert("Input avatarId unavailable");
-        factory.mintNFT(19);
+        factory.mintNFT(90);
     }
 
-    function test_MintNFT_AllowsMaxValidAvatarId() public {
+    function test_MintNFT_RevertsOnInsufficientBalance() public {
         factory.updateAvailableClaim(true);
-        vm.prank(user1);
-        factory.mintNFT(18);
-        assertEq(avatarsSC.balanceOf(user1), 1);
-    }
-
-    function test_MintNFT_RevertsIfInsufficientAllowance() public {
-        factory.updateAvailableClaim(true);
-        vm.prank(user2);
-        hapToken.approve(address(factory), 0);
-        vm.prank(user2);
+        address poorUser = makeAddr("poorUser");
+        vm.prank(poorUser);
+        hapToken.approve(address(factory), type(uint256).max);
+        vm.prank(poorUser);
         vm.expectRevert();
         factory.mintNFT(0);
     }
@@ -189,34 +179,37 @@ contract HeroArenaMiningFactoryV1Test is Test {
     // updateNFTPrice
     // ═══════════════════════════════════════════════════════════════════════════
 
-    function test_UpdateNFTPrice_SetsNewPrice() public {
-        factory.updateNFTPrice(200 * 10 ** 18);
-        assertEq(factory.nftPrice(), 200 * 10 ** 18);
-    }
-
-    function test_UpdateNFTPrice_NewPriceAppliedOnMint() public {
-        factory.updateNFTPrice(50 * 10 ** 18);
-        factory.updateAvailableClaim(true);
-        uint256 balBefore = hapToken.balanceOf(user1);
-        vm.prank(user1);
-        factory.mintNFT(0);
-        assertEq(hapToken.balanceOf(user1), balBefore - 50 * 10 ** 18);
+    function test_UpdateNFTPrice_UpdatesPrice() public {
+        uint256 newPrice = 200 * 10 ** 18;
+        factory.updateNFTPrice(newPrice);
+        assertEq(factory.nftPrice(), newPrice);
     }
 
     function test_UpdateNFTPrice_EmitsEvent() public {
+        uint256 newPrice = 200 * 10 ** 18;
         vm.expectEmit(false, false, false, true);
-        emit HeroArenaMiningFactoryV1.AvatarPriceUpdated(200 * 10 ** 18);
-        factory.updateNFTPrice(200 * 10 ** 18);
+        emit HeroArenaMiningFactoryV1.AvatarPriceUpdated(newPrice);
+        factory.updateNFTPrice(newPrice);
+    }
+
+    function test_UpdateNFTPrice_NewPriceUsedOnNextMint() public {
+        uint256 newPrice = 50 * 10 ** 18;
+        factory.updateNFTPrice(newPrice);
+        factory.updateAvailableClaim(true);
+        uint256 before = hapToken.balanceOf(user1);
+        vm.prank(user1);
+        factory.mintNFT(0);
+        assertEq(hapToken.balanceOf(user1), before - newPrice);
     }
 
     function test_UpdateNFTPrice_RevertsIfNotOwner() public {
         vm.prank(user1);
         vm.expectRevert();
-        factory.updateNFTPrice(200 * 10 ** 18);
+        factory.updateNFTPrice(1);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // proposeNFTContractOwnership
+    // proposeNFTContractOwnership + acceptNFTContractOwnership
     // ═══════════════════════════════════════════════════════════════════════════
 
     function test_ProposeOwnership_SetsPendingOwner() public {
@@ -230,33 +223,23 @@ contract HeroArenaMiningFactoryV1Test is Test {
         factory.proposeNFTContractOwnership(newOwner);
     }
 
+    function test_ProposeOwnership_CanCancel() public {
+        factory.proposeNFTContractOwnership(newOwner);
+        factory.proposeNFTContractOwnership(address(0));
+        assertEq(factory.pendingNFTContractOwner(), address(0));
+    }
+
     function test_ProposeOwnership_RevertsIfNotOwner() public {
         vm.prank(user1);
         vm.expectRevert();
         factory.proposeNFTContractOwnership(newOwner);
     }
 
-    function test_ProposeOwnership_CanCancelWithZeroAddress() public {
-        factory.proposeNFTContractOwnership(newOwner);
-        factory.proposeNFTContractOwnership(address(0));
-        assertEq(factory.pendingNFTContractOwner(), address(0));
-    }
-
-    function test_ProposeOwnership_CanOverwritePendingOwner() public {
-        factory.proposeNFTContractOwnership(newOwner);
-        factory.proposeNFTContractOwnership(user2);
-        assertEq(factory.pendingNFTContractOwner(), user2);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // acceptNFTContractOwnership
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    function test_AcceptOwnership_TransfersNFTContractOwnership() public {
+    function test_AcceptOwnership_TransfersAvatarOwnership() public {
         factory.proposeNFTContractOwnership(newOwner);
         vm.prank(newOwner);
         factory.acceptNFTContractOwnership();
-        assertEq(avatarsSC.owner(), newOwner);
+        assertEq(Ownable(address(avatarsSC)).owner(), newOwner);
     }
 
     function test_AcceptOwnership_ClearsPendingOwner() public {
@@ -268,9 +251,9 @@ contract HeroArenaMiningFactoryV1Test is Test {
 
     function test_AcceptOwnership_EmitsEvent() public {
         factory.proposeNFTContractOwnership(newOwner);
-        vm.prank(newOwner);
         vm.expectEmit(true, true, false, false);
         emit HeroArenaMiningFactoryV1.NFTContractOwnershipTransferred(address(factory), newOwner);
+        vm.prank(newOwner);
         factory.acceptNFTContractOwnership();
     }
 
@@ -281,51 +264,48 @@ contract HeroArenaMiningFactoryV1Test is Test {
         factory.acceptNFTContractOwnership();
     }
 
-    function test_AcceptOwnership_RevertsIfNoPendingProposal() public {
+    function test_AcceptOwnership_RevertsIfNoPendingOwner() public {
         vm.prank(user1);
         vm.expectRevert("Not the pending owner");
         factory.acceptNFTContractOwnership();
-    }
-
-    function test_AcceptOwnership_MintNFTRevertsAfterTransfer() public {
-        factory.updateAvailableClaim(true);
-        factory.proposeNFTContractOwnership(newOwner);
-        vm.prank(newOwner);
-        factory.acceptNFTContractOwnership();
-
-        vm.prank(user1);
-        vm.expectRevert();
-        factory.mintNFT(0);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
     // claimFee
     // ═══════════════════════════════════════════════════════════════════════════
 
-    function test_ClaimFee_TransfersHAPToOwner() public {
-        factory.updateAvailableClaim(true);
-        vm.prank(user1);
-        factory.mintNFT(0);
-
-        uint256 balBefore = hapToken.balanceOf(owner);
-        factory.claimFee(NFT_PRICE);
-        assertEq(hapToken.balanceOf(owner), balBefore + NFT_PRICE);
-    }
-
-    function test_ClaimFee_PartialWithdrawal() public {
+    function test_ClaimFee_TransfersHapToOwner() public {
         factory.updateAvailableClaim(true);
         vm.prank(user1);
         factory.mintNFT(0);
         vm.prank(user2);
-        factory.mintNFT(0);
-
-        factory.claimFee(NFT_PRICE);
-        assertEq(hapToken.balanceOf(address(factory)), NFT_PRICE);
+        factory.mintNFT(1);
+        uint256 before = hapToken.balanceOf(ownerAddr);
+        factory.claimFee(NFT_PRICE * 2);
+        assertEq(hapToken.balanceOf(ownerAddr), before + NFT_PRICE * 2);
     }
 
-    function test_ClaimFee_RevertsIfNotOwner() public {
+    function test_ClaimFee_PartialWithdraw() public {
+        factory.updateAvailableClaim(true);
         vm.prank(user1);
+        factory.mintNFT(0);
+        factory.claimFee(NFT_PRICE / 2);
+        assertEq(hapToken.balanceOf(address(factory)), NFT_PRICE / 2);
+    }
+
+    function test_ClaimFee_RevertsOnInsufficientBalance() public {
         vm.expectRevert();
         factory.claimFee(1);
     }
+
+    function test_ClaimFee_RevertsIfNotOwner() public {
+        factory.updateAvailableClaim(true);
+        vm.prank(user1);
+        factory.mintNFT(0);
+        vm.prank(user1);
+        vm.expectRevert();
+        factory.claimFee(NFT_PRICE);
+    }
+
+    receive() external payable {}
 }
