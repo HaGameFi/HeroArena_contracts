@@ -1,38 +1,47 @@
-# HADeployer(User)
+### HADeployer(User)
 0x02334708A7069993fe7f14cdbfC9863AcF3598C4
 
-# HAPool(User)
+### HAPool(User)
 0xd861Af70b9414762873Ad7387b95E96c6f6E8140
 
-# HAHolder01(User)
+### HAHolder01(User)
 0x33D3278f71e55f7978eB24141700caEdD2766f46
 
-# HapToken
+### HapToken
 0xf4b7de083a0b02a339d9bc066098ed2b0a227018 (Sepolia)
 
-# HeroArenaProfile
+### HeroArenaProfile
 0x922Ec303C910AA1797FDd7B855fCb608f195C0E4 (Sepolia)
 
-# HeroArenaAvatars (NFT)
+### HeroArenaAvatars (NFT)
 0xd7eC8fbb16DBbA6Cd3134Bc3fEA05Da0883AE07D (Sepolia)
 
-# HeroArenaMiningFactoryV1
+### HeroArenaMiningFactoryV1
 0x60213dB17e3648e648dB11866Cf97b3e29caa2ed (Sepolia)
 
-# HeroArenaSwap
+### HeroArenaSwap
 0x4C4C19387816150fdeEBEDa8920d18c4fB716d79 (Sepolia)
 
-# HeroArenaChallenges
+### HeroArenaChallenges
 0x2bc8889987A7e5646bD37AFd94b4860c0D08Cf93 (Sepolia)
 
-# HeroArenaMeetTheCouncil
-0xD93084746202c4cF4a2b5C53247206a9C6C19154
+### HeroArenaMeetTheCouncil
+0xD93084746202c4cF4a2b5C53247206a9C6C19154 (Sepolia)
 
-# AVATAR_ROLE
+### HeroArenaBattle
+0x0c3A69e0e40e4011dd8c577eAeAF469Aa7708309 (Sepolia)
+
+### AVATAR_ROLE
 0x4ad03022a30d74eec4387df6b3113797d5e272979263cc8e2f27b1c508217b6c
 
-# POINT_ROLE
+### POINT_ROLE
 0x110b44e4bccdedbab0625f137765abddea8ae658791a82fff3fb5e80db2bad48
 
-# SPECIAL_ROLE
+### SPECIAL_ROLE
 0x3f12a51c1a5d4235e47a0365ddc220be1678ccffcdf71bfd6ee9c417f801e008
+
+### OPERATOR_ROLE
+0x97667070c54ef182b0f5858b034beac1b6f3089aa2d3188bb1e8929f4fa9b929
+
+### LIQUIDATOR_ROLE
+0x5e17fc5225d4a099df75359ce1f405503ca79498a8dc46a7d583235a0ee45c16
