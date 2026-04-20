@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.28;
+pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {HeroArenaBattle} from "./HeroArenaBattle.sol";
+import {HeroArenaProfileInterface} from "./interfaces/HeroArenaProfileInterface.sol";
 import {HeroArenaProfile} from "./HeroArenaProfile.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 
@@ -20,6 +21,7 @@ contract HeroArenaBattleTest is Test {
     address ownerAddr;
     address user1;
     address user2;
+    address user3;
     address liquidatorAddr;
     address stranger;
 
@@ -33,32 +35,31 @@ contract HeroArenaBattleTest is Test {
         ownerAddr      = address(this);
         user1          = makeAddr("user1");
         user2          = makeAddr("user2");
+        user3          = makeAddr("user3");
         liquidatorAddr = makeAddr("liquidator");
         stranger       = makeAddr("stranger");
 
-        // Deploy profile (free registration)
         hapToken  = new MockERC20();
         profileSC = new HeroArenaProfile(IERC20(address(hapToken)), 0, 0);
         profileSC.addTeam("Warriors", "Warriors team");
         vm.prank(user1); profileSC.createProfile(1);
         vm.prank(user2); profileSC.createProfile(1);
+        vm.prank(user3); profileSC.createProfile(1);
 
-        // Deploy tokens
         betToken   = new MockERC20();
         feeToken   = new MockERC20();
         bonusToken = new MockERC20();
 
-        // Deploy battle contract
-        battleSC = new HeroArenaBattle(profileSC);
+        battleSC = new HeroArenaBattle(HeroArenaProfileInterface(address(profileSC)));
         battleSC.grantRole(LIQUIDATOR_ROLE, liquidatorAddr);
 
-        // Fund users
         betToken.mint(user1, 10_000 ether);
         betToken.mint(user2, 10_000 ether);
         feeToken.mint(user1, 10_000 ether);
         feeToken.mint(user2, 10_000 ether);
         vm.deal(user1, 100 ether);
         vm.deal(user2, 100 ether);
+        vm.deal(user3, 100 ether);
         vm.deal(stranger, 100 ether);
 
         vm.prank(user1); betToken.approve(address(battleSC), type(uint256).max);
@@ -72,13 +73,13 @@ contract HeroArenaBattleTest is Test {
     function _enableNative() internal {
         battleSC.updateAvailableCreateBattle(true);
         battleSC.updateAllowedBetToken(address(0), true);
-        battleSC.updateMinimunBetTokenAmount(0.01 ether, 0);
+        battleSC.updateMinimumBetTokenAmount(0.01 ether, 0);
     }
 
     function _enableERC20() internal {
         battleSC.updateAvailableCreateBattle(true);
         battleSC.updateAllowedBetToken(address(betToken), true);
-        battleSC.updateMinimunBetTokenAmount(0, 1);
+        battleSC.updateMinimumBetTokenAmount(0, 1);
     }
 
     function _createNativeOpenBattle() internal returns (uint256 battleId) {
@@ -170,11 +171,11 @@ contract HeroArenaBattleTest is Test {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // updateFeeAndBounsTokenAddressWithAmount
+    // updateFeeAndBonusTokenAddressWithAmount
     // ═══════════════════════════════════════════════════════════════════════════
 
     function test_UpdateFeeAndBonus_SetsValues() public {
-        battleSC.updateFeeAndBounsTokenAddressWithAmount(
+        battleSC.updateFeeAndBonusTokenAddressWithAmount(
             address(feeToken), FEE_AMOUNT, address(bonusToken), BONUS_AMOUNT
         );
         assertEq(battleSC.tokenAddresses(0), address(feeToken));
@@ -185,10 +186,10 @@ contract HeroArenaBattleTest is Test {
 
     function test_UpdateFeeAndBonus_EmitsEvent() public {
         vm.expectEmit(true, false, false, true);
-        emit HeroArenaBattle.FeeTokenAndBounsTokenUpdated(
+        emit HeroArenaBattle.FeeTokenAndBonusTokenUpdated(
             ownerAddr, address(feeToken), FEE_AMOUNT, address(bonusToken), BONUS_AMOUNT
         );
-        battleSC.updateFeeAndBounsTokenAddressWithAmount(
+        battleSC.updateFeeAndBonusTokenAddressWithAmount(
             address(feeToken), FEE_AMOUNT, address(bonusToken), BONUS_AMOUNT
         );
     }
@@ -196,7 +197,7 @@ contract HeroArenaBattleTest is Test {
     function test_UpdateFeeAndBonus_RevertsIfNotOwner() public {
         vm.prank(stranger);
         vm.expectRevert();
-        battleSC.updateFeeAndBounsTokenAddressWithAmount(address(feeToken), 1, address(0), 0);
+        battleSC.updateFeeAndBonusTokenAddressWithAmount(address(feeToken), 1, address(0), 0);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -223,11 +224,11 @@ contract HeroArenaBattleTest is Test {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // updateMinimunBetTokenAmount
+    // updateMinimumBetTokenAmount
     // ═══════════════════════════════════════════════════════════════════════════
 
     function test_UpdateMinBet_SetsValues() public {
-        battleSC.updateMinimunBetTokenAmount(0.5 ether, 10 ether);
+        battleSC.updateMinimumBetTokenAmount(0.5 ether, 10 ether);
         assertEq(battleSC.minBetAmount(0), 0.5 ether);
         assertEq(battleSC.minBetAmount(1), 10 ether);
     }
@@ -235,7 +236,7 @@ contract HeroArenaBattleTest is Test {
     function test_UpdateMinBet_RevertsIfNotOwner() public {
         vm.prank(stranger);
         vm.expectRevert();
-        battleSC.updateMinimunBetTokenAmount(1, 1);
+        battleSC.updateMinimumBetTokenAmount(1, 1);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -279,7 +280,8 @@ contract HeroArenaBattleTest is Test {
         _enableNative();
         vm.prank(user1);
         battleSC.createBattle{value: BET_AMOUNT}(address(0), BET_AMOUNT, user2);
-        assertEq(battleSC.getBattleInfo(1).targetAddress, user2);
+        uint256 id = battleSC.getBattleCount();
+        assertEq(battleSC.getBattleInfo(id).targetAddress, user2);
     }
 
     function test_CreateBattle_Native_RevertsIfWrongETHAmount() public {
@@ -291,54 +293,11 @@ contract HeroArenaBattleTest is Test {
 
     function test_CreateBattle_Native_RevertsBelowMinBet() public {
         _enableNative();
-        battleSC.updateMinimunBetTokenAmount(2 ether, 0);
+        battleSC.updateMinimumBetTokenAmount(2 ether, 0);
         vm.prank(user1);
         vm.expectRevert("Bet amount below minimum");
         battleSC.createBattle{value: BET_AMOUNT}(address(0), BET_AMOUNT, address(0));
     }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // createBattle — ERC20
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    function test_CreateBattle_ERC20_TransfersToken() public {
-        _enableERC20();
-        uint256 before = betToken.balanceOf(address(battleSC));
-        vm.prank(user1);
-        battleSC.createBattle(address(betToken), BET_AMOUNT, address(0));
-        assertEq(betToken.balanceOf(address(battleSC)), before + BET_AMOUNT);
-    }
-
-    function test_CreateBattle_ERC20_StoresBetTokenAddress() public {
-        uint256 id = _createERC20OpenBattle();
-        assertEq(battleSC.getBattleInfo(id).betTokenAddress, address(betToken));
-    }
-
-    function test_CreateBattle_ERC20_RevertsIfETHSent() public {
-        _enableERC20();
-        vm.prank(user1);
-        vm.expectRevert("ETH not accepted for ERC20 bet");
-        battleSC.createBattle{value: 1 ether}(address(betToken), BET_AMOUNT, address(0));
-    }
-
-    function test_CreateBattle_ERC20_RevertsIfTokenNotAllowed() public {
-        battleSC.updateAvailableCreateBattle(true);
-        vm.prank(user1);
-        vm.expectRevert("BetToken not allowed");
-        battleSC.createBattle(address(betToken), BET_AMOUNT, address(0));
-    }
-
-    function test_CreateBattle_WithFee_CollectsFee() public {
-        _enableERC20();
-        battleSC.updateFeeAndBounsTokenAddressWithAmount(address(feeToken), FEE_AMOUNT, address(0), 0);
-        vm.prank(user1);
-        battleSC.createBattle(address(betToken), BET_AMOUNT, address(0));
-        assertEq(feeToken.balanceOf(address(battleSC)), FEE_AMOUNT);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // createBattle — access control
-    // ═══════════════════════════════════════════════════════════════════════════
 
     function test_CreateBattle_RevertsIfNotAvailable() public {
         battleSC.updateAllowedBetToken(address(0), true);
@@ -370,6 +329,53 @@ contract HeroArenaBattleTest is Test {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // createBattle — ERC20
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    function test_CreateBattle_ERC20_TransfersToken() public {
+        _enableERC20();
+        uint256 before = betToken.balanceOf(address(battleSC));
+        vm.prank(user1);
+        battleSC.createBattle(address(betToken), BET_AMOUNT, address(0));
+        assertEq(betToken.balanceOf(address(battleSC)), before + BET_AMOUNT);
+    }
+
+    function test_CreateBattle_ERC20_StoresBetTokenAddress() public {
+        uint256 id = _createERC20OpenBattle();
+        assertEq(battleSC.getBattleInfo(id).betTokenAddress, address(betToken));
+    }
+
+    function test_CreateBattle_ERC20_RevertsIfETHSent() public {
+        _enableERC20();
+        vm.prank(user1);
+        vm.expectRevert("ETH not accepted for ERC20 bet");
+        battleSC.createBattle{value: 1 ether}(address(betToken), BET_AMOUNT, address(0));
+    }
+
+    function test_CreateBattle_ERC20_RevertsIfTokenNotAllowed() public {
+        battleSC.updateAvailableCreateBattle(true);
+        vm.prank(user1);
+        vm.expectRevert("Token not allowed");
+        battleSC.createBattle(address(betToken), BET_AMOUNT, address(0));
+    }
+
+    function test_CreateBattle_WithFee_CollectsFee() public {
+        _enableERC20();
+        battleSC.updateFeeAndBonusTokenAddressWithAmount(address(feeToken), FEE_AMOUNT, address(0), 0);
+        vm.prank(user1);
+        battleSC.createBattle(address(betToken), BET_AMOUNT, address(0));
+        assertEq(feeToken.balanceOf(address(battleSC)), FEE_AMOUNT);
+    }
+
+    function test_CreateBattle_WithFeeAmountButNoToken_Reverts() public {
+        _enableERC20();
+        battleSC.updateFeeAndBonusTokenAddressWithAmount(address(0), FEE_AMOUNT, address(0), 0);
+        vm.prank(user1);
+        vm.expectRevert("FeeToken not configured");
+        battleSC.createBattle(address(betToken), BET_AMOUNT, address(0));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // joinExistBattle
     // ═══════════════════════════════════════════════════════════════════════════
 
@@ -398,29 +404,39 @@ contract HeroArenaBattleTest is Test {
         assertEq(info.targetAddress, user2);
     }
 
-    function test_JoinBattle_PrivateBattle_InvitedUserCanJoin() public {
-        _enableNative();
-        vm.prank(user1);
-        battleSC.createBattle{value: BET_AMOUNT}(address(0), BET_AMOUNT, user2);
-        vm.prank(user2);
-        battleSC.joinExistBattle{value: BET_AMOUNT}(1);
-        assertTrue(battleSC.getBattleInfo(1).isStarted);
-    }
-
-    function test_JoinBattle_WithFee_CollectsFee() public {
-        _enableERC20();
-        battleSC.updateFeeAndBounsTokenAddressWithAmount(address(feeToken), FEE_AMOUNT, address(0), 0);
-        vm.prank(user1); battleSC.createBattle(address(betToken), BET_AMOUNT, address(0));
-        vm.prank(user2); battleSC.joinExistBattle(1);
-        assertEq(feeToken.balanceOf(address(battleSC)), FEE_AMOUNT * 2);
-    }
-
     function test_JoinBattle_EmitsEvent() public {
         uint256 id = _createNativeOpenBattle();
         vm.expectEmit(true, true, false, false);
         emit HeroArenaBattle.BattleJoined(id, user2);
         vm.prank(user2);
         battleSC.joinExistBattle{value: BET_AMOUNT}(id);
+    }
+
+    function test_JoinBattle_PrivateBattle_InvitedUserCanJoin() public {
+        _enableNative();
+        vm.prank(user1);
+        battleSC.createBattle{value: BET_AMOUNT}(address(0), BET_AMOUNT, user2);
+        uint256 id = battleSC.getBattleCount();
+        vm.prank(user2);
+        battleSC.joinExistBattle{value: BET_AMOUNT}(id);
+        assertTrue(battleSC.getBattleInfo(id).isStarted);
+    }
+
+    function test_JoinBattle_WithFee_CollectsFeeFromBothPlayers() public {
+        _enableERC20();
+        battleSC.updateFeeAndBonusTokenAddressWithAmount(address(feeToken), FEE_AMOUNT, address(0), 0);
+        vm.prank(user1); battleSC.createBattle(address(betToken), BET_AMOUNT, address(0));
+        uint256 id = battleSC.getBattleCount();
+        vm.prank(user2); battleSC.joinExistBattle(id);
+        assertEq(feeToken.balanceOf(address(battleSC)), FEE_AMOUNT * 2);
+    }
+
+    function test_JoinBattle_SucceedsAfterTokenRemovedFromWhitelist() public {
+        uint256 id = _createERC20OpenBattle();
+        battleSC.updateAllowedBetToken(address(betToken), false);
+        vm.prank(user2);
+        battleSC.joinExistBattle(id);
+        assertTrue(battleSC.getBattleInfo(id).isStarted);
     }
 
     function test_JoinBattle_RevertsIfBattleNotExist() public {
@@ -432,9 +448,6 @@ contract HeroArenaBattleTest is Test {
 
     function test_JoinBattle_RevertsIfAlreadyStarted() public {
         uint256 id = _startNativeBattle();
-        address user3 = makeAddr("user3");
-        vm.prank(user3); profileSC.createProfile(1);
-        vm.deal(user3, 10 ether);
         vm.prank(user3);
         vm.expectRevert("Battle already has an opponent");
         battleSC.joinExistBattle{value: BET_AMOUNT}(id);
@@ -451,12 +464,10 @@ contract HeroArenaBattleTest is Test {
         _enableNative();
         vm.prank(user1);
         battleSC.createBattle{value: BET_AMOUNT}(address(0), BET_AMOUNT, user2);
-        address user3 = makeAddr("user3");
-        vm.prank(user3); profileSC.createProfile(1);
-        vm.deal(user3, 10 ether);
+        uint256 id = battleSC.getBattleCount();
         vm.prank(user3);
         vm.expectRevert("Not invited to this battle");
-        battleSC.joinExistBattle{value: BET_AMOUNT}(1);
+        battleSC.joinExistBattle{value: BET_AMOUNT}(id);
     }
 
     function test_JoinBattle_RevertsIfNotRegistered() public {
@@ -503,7 +514,7 @@ contract HeroArenaBattleTest is Test {
 
     function test_SettleBattle_WithBonus_PaysBonus() public {
         bonusToken.mint(address(battleSC), BONUS_AMOUNT);
-        battleSC.updateFeeAndBounsTokenAddressWithAmount(address(0), 0, address(bonusToken), BONUS_AMOUNT);
+        battleSC.updateFeeAndBonusTokenAddressWithAmount(address(0), 0, address(bonusToken), BONUS_AMOUNT);
         uint256 id = _startERC20Battle();
         uint256 before = bonusToken.balanceOf(user2);
         vm.prank(liquidatorAddr);
@@ -539,7 +550,7 @@ contract HeroArenaBattleTest is Test {
     function test_SettleBattle_RevertsIfNotLiquidator() public {
         uint256 id = _startNativeBattle();
         vm.prank(stranger);
-        vm.expectRevert("Not an liquidator role");
+        vm.expectRevert();
         battleSC.settleBattle(id, user1);
     }
 
@@ -561,6 +572,69 @@ contract HeroArenaBattleTest is Test {
         vm.prank(liquidatorAddr);
         vm.expectRevert("Invalid winner address");
         battleSC.settleBattle(id, stranger);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // closeBattle
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    function test_CloseBattle_Native_RefundsCreator() public {
+        uint256 id = _createNativeOpenBattle();
+        uint256 before = user1.balance;
+        vm.prank(liquidatorAddr);
+        battleSC.closeBattle(id);
+        assertEq(user1.balance, before + BET_AMOUNT);
+    }
+
+    function test_CloseBattle_ERC20_RefundsCreator() public {
+        uint256 id = _createERC20OpenBattle();
+        uint256 before = betToken.balanceOf(user1);
+        vm.prank(liquidatorAddr);
+        battleSC.closeBattle(id);
+        assertEq(betToken.balanceOf(user1), before + BET_AMOUNT);
+    }
+
+    function test_CloseBattle_SetsIsEnded() public {
+        uint256 id = _createNativeOpenBattle();
+        vm.prank(liquidatorAddr);
+        battleSC.closeBattle(id);
+        assertTrue(battleSC.getBattleInfo(id).isEnded);
+    }
+
+    function test_CloseBattle_EmitsEvent() public {
+        uint256 id = _createNativeOpenBattle();
+        vm.expectEmit(true, true, false, true);
+        emit HeroArenaBattle.BattleClosed(id, liquidatorAddr, BET_AMOUNT);
+        vm.prank(liquidatorAddr);
+        battleSC.closeBattle(id);
+    }
+
+    function test_CloseBattle_RevertsIfBattleNotExist() public {
+        vm.prank(liquidatorAddr);
+        vm.expectRevert("Battle does not exist");
+        battleSC.closeBattle(999);
+    }
+
+    function test_CloseBattle_RevertsIfAlreadyStarted() public {
+        uint256 id = _startNativeBattle();
+        vm.prank(liquidatorAddr);
+        vm.expectRevert("Battle already has an opponent");
+        battleSC.closeBattle(id);
+    }
+
+    function test_CloseBattle_RevertsIfAlreadyEnded() public {
+        uint256 id = _startNativeBattle();
+        vm.prank(liquidatorAddr); battleSC.settleBattle(id, user1);
+        vm.prank(liquidatorAddr);
+        vm.expectRevert("Battle already ended");
+        battleSC.closeBattle(id);
+    }
+
+    function test_CloseBattle_RevertsIfNotLiquidator() public {
+        uint256 id = _createNativeOpenBattle();
+        vm.prank(stranger);
+        vm.expectRevert();
+        battleSC.closeBattle(id);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -618,7 +692,7 @@ contract HeroArenaBattleTest is Test {
 
     function test_ClaimTokens_RevertsIfInvalidDestination() public {
         address[] memory tokens = new address[](0);
-        vm.expectRevert("Invalid destination");
+        vm.expectRevert("Invalid address");
         battleSC.claimTokens(address(0), tokens);
     }
 

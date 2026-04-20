@@ -1,64 +1,56 @@
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.28;
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.29;
 
-import "@openzeppelin/contracts/access/AccessControl.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {HeroArenaProfileInterface} from "./interfaces/HeroArenaProfileInterface.sol";
 
-import "./HeroArenaProfile.sol";
-
-contract HeroArenaBattle is AccessControl, Ownable, ReentrancyGuardTransient {
+/**
+ * @title HeroArenaBattle
+ */
+contract HeroArenaBattle is Ownable, AccessControl, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
+    // ---------- Roles ----------
     bytes32 public constant LIQUIDATOR_ROLE = keccak256("LIQUIDATOR_ROLE");
 
-    HeroArenaProfile public HeroArenaProfileSC;
+    // ---------- External deps ----------
+    HeroArenaProfileInterface public immutable HeroArenaProfileSC;
 
-    bool public availableCreateBattle;
-
-    // Mapping which address has been forbidden to play
-    mapping(address => bool) public forbiddenToPlay;
-
-    // [0]=feeToken, [1]=bonusToken
-    address[2] public tokenAddresses;
-
-    // [0]=feeTokenAmount, [1]=bonusTokenAmount
-    uint256[2] public tokenAmounts;
-
-    // Minimum bet amount: [0]=ETH (native), [1]=ERC20
-    uint256[2] public minBetAmount;
-
-    // Whitelist of tokens allowed as betToken (including address(0) for native ETH)
-    mapping(address => bool) public allowedBetTokens;
-
-    // Struct that contains pvp game's information
+    // ---------- Structs ----------
     struct BattleInfo {
-        address selfAddress;     // battle creator
-        address targetAddress;   // invited opponent (address(0) = open to anyone); set to actual joiner after join
-        address betTokenAddress; // address(0) = native ETH bet; any other address = ERC20 bet token
-        uint256 betAmount;       // amount each side bets
-        uint256 createdAt;       // creation timestamp
-        address winner;          // set after settlement
-        bool isStarted;          // true once an opponent has joined
-        bool isEnded;            // true after settlement
+        address selfAddress;       // battle creator
+        address targetAddress;     // designated opponent; address(0) = open match; overwritten with actual joiner on join
+        address betTokenAddress;   // bet token (address(0) = native ETH)
+        uint256 betAmount;
+        uint256 createdAt;
+        address winner;
+        bool isStarted;            // opponent has joined
+        bool isEnded;              // settled or closed
     }
 
-    // Mapping battleId => BattleInfo
+    // ---------- State ----------
+    mapping(address => bool) public allowedBetTokens;
+    mapping(address => bool) public forbiddenToPlay;
+    bool public availableCreateBattle;
+
+    // minBetAmount[0] = min ETH bet, minBetAmount[1] = min ERC20 bet
+    uint256[2] public minBetAmount;
+
+    // tokenAddresses[0] = feeToken, tokenAddresses[1] = bonusToken
+    // tokenAmounts[0]   = feeAmount, tokenAmounts[1]   = bonusAmount
+    address[2] public tokenAddresses;
+    uint256[2] public tokenAmounts;
+
     mapping(uint256 => BattleInfo) private _battles;
+    uint256 private _battleCount;
 
-    // Used for generating sequential battleIds
-    uint256 private _battleCounter;
-
+    // ---------- Events ----------
+    event AllowedBetTokenUpdated(address indexed owner, address indexed token, bool allowed);
     event AvailableCreateBattleUpdated(address indexed owner, bool isAvail);
-    event ForbiddenToPlayUpdated(address indexed owner, address indexed userAddress, bool isForbidden);
-    event MinimumBetTokenAmountUpdated(address indexed owner, uint256 amount0, uint256 amount1);
-    event FeeTokenAndBounsTokenUpdated(
-        address indexed owner,
-        address feeToken, uint256 feeTokenAmount,
-        address bounsToken, uint256 bounsTokenAmount
-    );
     event BattleCreated(
         uint256 indexed battleId,
         address indexed creator,
@@ -68,29 +60,163 @@ contract HeroArenaBattle is AccessControl, Ownable, ReentrancyGuardTransient {
     );
     event BattleJoined(uint256 indexed battleId, address indexed joiner);
     event BattleEnded(uint256 indexed battleId, address indexed winner, uint256 totalReward);
-    event AllowedBetTokenUpdated(address indexed owner, address indexed token, bool allowed);
+    event BattleClosed(uint256 indexed battleId, address indexed closedBy, uint256 refundedAmount);
+    event FeeTokenAndBonusTokenUpdated(
+        address indexed owner,
+        address feeToken,
+        uint256 feeTokenAmount,
+        address bonusToken,
+        uint256 bonusTokenAmount
+    );
+    event ForbiddenToPlayUpdated(address indexed owner, address indexed userAddress, bool isForbidden);
+    event MinimumBetTokenAmountUpdated(address indexed owner, uint256 amount0, uint256 amount1);
     event TokenDeposited(address indexed depositor, address indexed tokenAddress, uint256 amount);
     event TokensClaimed(address indexed to);
 
-    modifier onlyLiquidator() {
-        require(hasRole(LIQUIDATOR_ROLE, msg.sender), "Not an liquidator role");
-        _;
+    // ---------- Constructor ----------
+    constructor(HeroArenaProfileInterface _HeroArenaProfileSC) Ownable(msg.sender) {
+        HeroArenaProfileSC = _HeroArenaProfileSC;
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
     }
 
-    modifier whoCanPlay() {
+    receive() external payable {}
+
+    // ---------- Modifiers ----------
+    modifier onlyRegisteredAndAllowed() {
         require(HeroArenaProfileSC.hasRegistered(msg.sender), "Profile not registered");
         require(!forbiddenToPlay[msg.sender], "Forbidden to play");
         _;
     }
 
-    constructor(HeroArenaProfile _HeroArenaProfileSC) Ownable(msg.sender) {
-        HeroArenaProfileSC = _HeroArenaProfileSC;
-        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+    // =====================================================================
+    //                          Battle lifecycle
+    // =====================================================================
+
+    /**
+     * @notice Create a new battle.
+     * @param _betTokenAddress Bet token; address(0) = native ETH.
+     * @param _betAmount       Bet amount.
+     * @param _targetAddress   Designated opponent; address(0) = open match.
+     */
+    function createBattle(
+        address _betTokenAddress,
+        uint256 _betAmount,
+        address _targetAddress
+    ) external payable nonReentrant onlyRegisteredAndAllowed {
+        require(availableCreateBattle, "Cannot create battle");
+        require(_targetAddress != msg.sender, "Cannot target yourself");
+        require(allowedBetTokens[_betTokenAddress], "Token not allowed");
+
+        _receiveBet(_betTokenAddress, _betAmount, msg.sender);
+        _chargeFee(msg.sender);
+
+        uint256 battleId = ++_battleCount;
+        BattleInfo storage b = _battles[battleId];
+        b.selfAddress = msg.sender;
+        b.targetAddress = _targetAddress;
+        b.betTokenAddress = _betTokenAddress;
+        b.betAmount = _betAmount;
+        b.createdAt = block.timestamp;
+
+        emit BattleCreated(battleId, msg.sender, _targetAddress, _betTokenAddress, _betAmount);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Admin configuration
-    // ═══════════════════════════════════════════════════════════════════════════
+    /**
+     * @notice Join an existing battle.
+     */
+    function joinExistBattle(uint256 _battleId)
+        external
+        payable
+        nonReentrant
+        onlyRegisteredAndAllowed
+    {
+        BattleInfo storage b = _battles[_battleId];
+        require(b.selfAddress != address(0), "Battle does not exist");
+        require(!b.isStarted, "Battle already has an opponent");
+        require(!b.isEnded, "Battle already ended");
+        require(b.selfAddress != msg.sender, "Cannot join own battle");
+        require(
+            b.targetAddress == address(0) || b.targetAddress == msg.sender,
+            "Not invited to this battle"
+        );
+
+        _receiveBet(b.betTokenAddress, b.betAmount, msg.sender);
+        _chargeFee(msg.sender);
+
+        b.isStarted = true;
+        b.targetAddress = msg.sender;
+
+        emit BattleJoined(_battleId, msg.sender);
+    }
+
+    /**
+     * @notice Settle a battle and pay out the reward to the winner.
+     */
+    function settleBattle(uint256 _battleId, address _winner)
+        external
+        nonReentrant
+        onlyRole(LIQUIDATOR_ROLE)
+    {
+        BattleInfo storage b = _battles[_battleId];
+        require(b.selfAddress != address(0), "Battle does not exist");
+        require(!b.isEnded, "Battle already ended");
+        require(b.isStarted, "Opponent has not joined");
+        require(_winner == b.selfAddress || _winner == b.targetAddress, "Invalid winner address");
+
+        b.winner = _winner;
+        b.isEnded = true;
+
+        uint256 totalReward = b.betAmount * 2;
+        _payout(b.betTokenAddress, _winner, totalReward);
+
+        // Optional bonus token reward
+        address bonusToken = tokenAddresses[1];
+        uint256 bonusAmount = tokenAmounts[1];
+        if (bonusAmount > 0 && bonusToken != address(0)) {
+            IERC20(bonusToken).safeTransfer(_winner, bonusAmount);
+        }
+
+        emit BattleEnded(_battleId, _winner, totalReward);
+    }
+
+    /**
+     * @notice Close a battle that has not yet been joined and refund the creator's bet.
+     *         Use case: clean up battles that have been open too long or were created by mistake.
+     */
+    function closeBattle(uint256 _battleId) external nonReentrant onlyRole(LIQUIDATOR_ROLE) {
+        BattleInfo storage b = _battles[_battleId];
+        require(b.selfAddress != address(0), "Battle does not exist");
+        require(!b.isEnded, "Battle already ended");
+        require(!b.isStarted, "Battle already has an opponent");
+
+        b.isEnded = true;
+
+        uint256 refundAmount = b.betAmount;
+        _payout(b.betTokenAddress, b.selfAddress, refundAmount);
+
+        emit BattleClosed(_battleId, msg.sender, refundAmount);
+    }
+
+    // =====================================================================
+    //                          Views
+    // =====================================================================
+
+    function getBattleInfo(uint256 _battleId) external view returns (BattleInfo memory) {
+        return _battles[_battleId];
+    }
+
+    function getBattleCount() external view returns (uint256) {
+        return _battleCount;
+    }
+
+    // =====================================================================
+    //                          Admin
+    // =====================================================================
+
+    function updateAllowedBetToken(address _token, bool _allowed) external onlyOwner {
+        allowedBetTokens[_token] = _allowed;
+        emit AllowedBetTokenUpdated(msg.sender, _token, _allowed);
+    }
 
     function updateAvailableCreateBattle(bool _isAvailable) external onlyOwner {
         availableCreateBattle = _isAvailable;
@@ -102,150 +228,55 @@ contract HeroArenaBattle is AccessControl, Ownable, ReentrancyGuardTransient {
         emit ForbiddenToPlayUpdated(msg.sender, _user, _isForbidden);
     }
 
-    function updateFeeAndBounsTokenAddressWithAmount(
-        address _feeToken,   uint256 _feeTokenAmount,
-        address _bounsToken, uint256 _bounsTokenAmount
-    ) external onlyOwner {
-        tokenAddresses[0] = _feeToken;
-        tokenAddresses[1] = _bounsToken;
-        tokenAmounts[0]   = _feeTokenAmount;
-        tokenAmounts[1]   = _bounsTokenAmount;
-
-        emit FeeTokenAndBounsTokenUpdated(
-            msg.sender,
-            _feeToken, _feeTokenAmount,
-            _bounsToken, _bounsTokenAmount
-        );
-    }
-
-    function updateAllowedBetToken(address _token, bool _allowed) external onlyOwner {
-        allowedBetTokens[_token] = _allowed;
-        emit AllowedBetTokenUpdated(msg.sender, _token, _allowed);
-    }
-
-    function updateMinimunBetTokenAmount(uint256 _amount0, uint256 _amount1) external onlyOwner {
+    /**
+     * @param _amount0 Minimum ETH bet amount
+     * @param _amount1 Minimum ERC20 bet amount
+     */
+    function updateMinimumBetTokenAmount(uint256 _amount0, uint256 _amount1) external onlyOwner {
         minBetAmount[0] = _amount0;
         minBetAmount[1] = _amount1;
         emit MinimumBetTokenAmountUpdated(msg.sender, _amount0, _amount1);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Battle actions
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /**
-     * Create a new battle.
-     * @param _betTokenAddress address(0) = bet with native ETH; any other address = bet with that ERC20
-     * @param _betAmount       amount each participant puts up
-     * @param _targetAddress   specific opponent address, or address(0) for an open battle
-     */
-    function createBattle(
-        address _betTokenAddress,
-        uint256 _betAmount,
-        address _targetAddress
-    ) external payable whoCanPlay nonReentrant {
-        require(availableCreateBattle, "Cannot create battle");
-        require(_targetAddress != msg.sender, "Cannot target yourself");
-
-        _collectBet(_betTokenAddress, _betAmount, msg.sender);
-        _collectFee(msg.sender);
-
-        uint256 battleId = ++_battleCounter;
-        _battles[battleId] = BattleInfo({
-            selfAddress:     msg.sender,
-            targetAddress:   _targetAddress,
-            betTokenAddress: _betTokenAddress,
-            betAmount:       _betAmount,
-            createdAt:       block.timestamp,
-            winner:          address(0),
-            isStarted:       false,
-            isEnded:         false
-        });
-
-        emit BattleCreated(battleId, msg.sender, _targetAddress, _betTokenAddress, _betAmount);
-    }
-
-    /**
-     * Join an existing open battle (targetAddress == 0) or one that specifically
-     * targets the caller.
-     */
-    function joinExistBattle(uint256 _battleId) external payable whoCanPlay nonReentrant {
-        BattleInfo storage battle = _battles[_battleId];
-        require(battle.selfAddress != address(0), "Battle does not exist");
-        require(!battle.isStarted, "Battle already has an opponent");
-        require(!battle.isEnded, "Battle already ended");
-        require(battle.selfAddress != msg.sender, "Cannot join own battle");
-        require(
-            battle.targetAddress == address(0) || battle.targetAddress == msg.sender,
-            "Not invited to this battle"
+    function updateFeeAndBonusTokenAddressWithAmount(
+        address _feeToken,
+        uint256 _feeTokenAmount,
+        address _bonusToken,
+        uint256 _bonusTokenAmount
+    ) external onlyOwner {
+        tokenAddresses[0] = _feeToken;
+        tokenAddresses[1] = _bonusToken;
+        tokenAmounts[0] = _feeTokenAmount;
+        tokenAmounts[1] = _bonusTokenAmount;
+        emit FeeTokenAndBonusTokenUpdated(
+            msg.sender,
+            _feeToken,
+            _feeTokenAmount,
+            _bonusToken,
+            _bonusTokenAmount
         );
-
-        _collectBet(battle.betTokenAddress, battle.betAmount, msg.sender);
-        _collectFee(msg.sender);
-
-        battle.isStarted     = true;
-        battle.targetAddress = msg.sender;
-
-        emit BattleJoined(_battleId, msg.sender);
     }
 
-    /**
-     * Settle a battle and send rewards to the winner.
-     * @param _battleId battle to settle
-     * @param _winner   must be one of the two participants
-     */
-    function settleBattle(uint256 _battleId, address _winner) external onlyLiquidator {
-        BattleInfo storage battle = _battles[_battleId];
-        require(battle.selfAddress != address(0), "Battle does not exist");
-        require(!battle.isEnded, "Battle already ended");
-        require(battle.isStarted, "Opponent has not joined");
-        require(
-            _winner == battle.selfAddress || _winner == battle.targetAddress,
-            "Invalid winner address"
-        );
-
-        battle.isEnded = true;
-        battle.winner  = _winner;
-
-        uint256 totalBet = battle.betAmount * 2;
-
-        if (battle.betTokenAddress == address(0)) {
-            (bool ok,) = _winner.call{value: totalBet}("");
-            require(ok, "ETH transfer failed");
-        } else {
-            IERC20(battle.betTokenAddress).safeTransfer(_winner, totalBet);
-        }
-
-        if (tokenAmounts[1] > 0 && tokenAddresses[1] != address(0)) {
-            IERC20(tokenAddresses[1]).safeTransfer(_winner, tokenAmounts[1]);
-        }
-
-        emit BattleEnded(_battleId, _winner, totalBet);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Token management
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /**
-     * Deposit ERC20 tokens into the contract (e.g. to fund bonus/fee reserves).
-     */
     function depositToken(address _tokenAddress, uint256 _amount) external onlyOwner {
         IERC20(_tokenAddress).safeTransferFrom(msg.sender, address(this), _amount);
         emit TokenDeposited(msg.sender, _tokenAddress, _amount);
     }
 
     /**
-     * Withdraw all ETH and specified ERC20 tokens to `_to`.
-     * @param _to          destination address
-     * @param _erc20Tokens list of ERC20 token addresses to sweep
+     * @notice Withdraw all ETH and specified ERC20 token balances from the contract.
+     * @dev    Warning: this sweeps the entire balance, including funds locked in unsettled battles.
+     *         In production, consider restricting withdrawals to unlocked funds only.
      */
-    function claimTokens(address _to, address[] calldata _erc20Tokens) external onlyOwner {
-        require(_to != address(0), "Invalid destination");
+    function claimTokens(address _to, address[] calldata _erc20Tokens)
+        external
+        onlyOwner
+        nonReentrant
+    {
+        require(_to != address(0), "Invalid address");
 
-        uint256 nativeBal = address(this).balance;
-        if (nativeBal > 0) {
-            (bool ok,) = _to.call{value: nativeBal}("");
+        uint256 ethBal = address(this).balance;
+        if (ethBal > 0) {
+            (bool ok, ) = _to.call{value: ethBal}("");
             require(ok, "ETH transfer failed");
         }
 
@@ -261,40 +292,35 @@ contract HeroArenaBattle is AccessControl, Ownable, ReentrancyGuardTransient {
         emit TokensClaimed(_to);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // View helpers
-    // ═══════════════════════════════════════════════════════════════════════════
+    // =====================================================================
+    //                          Internals
+    // =====================================================================
 
-    function getBattleInfo(uint256 _battleId) external view returns (BattleInfo memory) {
-        return _battles[_battleId];
-    }
-
-    function getBattleCount() external view returns (uint256) {
-        return _battleCounter;
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Internal helpers
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    function _collectBet(address _betTokenAddress, uint256 _betAmount, address _from) internal {
-        require(allowedBetTokens[_betTokenAddress], "BetToken not allowed");
-        if (_betTokenAddress == address(0)) {
-            require(_betAmount >= minBetAmount[0], "Bet amount below minimum");
-            require(msg.value == _betAmount, "Incorrect ETH amount sent");
+    function _receiveBet(address token, uint256 amount, address from) internal {
+        if (token == address(0)) {
+            require(amount >= minBetAmount[0], "Bet amount below minimum");
+            require(msg.value == amount, "Incorrect ETH amount sent");
         } else {
             require(msg.value == 0, "ETH not accepted for ERC20 bet");
-            require(_betAmount >= minBetAmount[1], "Bet amount below minimum");
-            IERC20(_betTokenAddress).safeTransferFrom(_from, address(this), _betAmount);
+            require(amount >= minBetAmount[1], "Bet amount below minimum");
+            IERC20(token).safeTransferFrom(from, address(this), amount);
         }
     }
 
-    function _collectFee(address _from) internal {
-        if (tokenAmounts[0] > 0) {
-            require(tokenAddresses[0] != address(0), "FeeToken not configured");
-            IERC20(tokenAddresses[0]).safeTransferFrom(_from, address(this), tokenAmounts[0]);
-        }
+    function _chargeFee(address from) internal {
+        uint256 feeAmount = tokenAmounts[0];
+        if (feeAmount == 0) return;
+        address feeToken = tokenAddresses[0];
+        require(feeToken != address(0), "FeeToken not configured");
+        IERC20(feeToken).safeTransferFrom(from, address(this), feeAmount);
     }
 
-    receive() external payable {}
+    function _payout(address token, address to, uint256 amount) internal {
+        if (token == address(0)) {
+            (bool ok, ) = to.call{value: amount}("");
+            require(ok, "ETH transfer failed");
+        } else {
+            IERC20(token).safeTransfer(to, amount);
+        }
+    }
 }
