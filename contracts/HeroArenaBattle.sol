@@ -61,6 +61,7 @@ contract HeroArenaBattle is Ownable, AccessControl, ReentrancyGuard {
     event BattleJoined(uint256 indexed battleId, address indexed joiner);
     event BattleEnded(uint256 indexed battleId, address indexed winner, uint256 totalReward);
     event BattleClosed(uint256 indexed battleId, address indexed closedBy, uint256 refundedAmount);
+    event BattleConceded(uint256 indexed battleId, address indexed conceder, address indexed winner, uint256 totalReward);
     event FeeTokenAndBonusTokenUpdated(
         address indexed owner,
         address feeToken,

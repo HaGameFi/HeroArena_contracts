@@ -13,6 +13,7 @@ contract HeroArenaProfileTest is Test {
     HeroArenaProfile profile;
     MockERC20        hapToken;
     MockERC721       avatarNFT;
+    MockERC721       frameNFT;
 
     address owner;
     address pointRole;
@@ -32,16 +33,18 @@ contract HeroArenaProfileTest is Test {
         user1       = makeAddr("user1");
         user2       = makeAddr("user2");
 
-        hapToken   = new MockERC20();
-        profile    = new HeroArenaProfile(IERC20(address(hapToken)), FEE_REGISTER, FEE_UPDATE);
-        avatarNFT  = new MockERC721();
+        hapToken  = new MockERC20();
+        profile   = new HeroArenaProfile(IERC20(address(hapToken)), FEE_REGISTER, FEE_UPDATE);
+        avatarNFT = new MockERC721();
+        frameNFT  = new MockERC721();
 
         // Grant roles
         profile.grantRole(profile.POINT_ROLE(),   pointRole);
         profile.grantRole(profile.SPECIAL_ROLE(), specialRole);
 
-        // Register avatar NFT contract
+        // Register NFT contracts
         profile.addAvatarAddress(address(avatarNFT));
+        profile.addFrameAddress(address(frameNFT));
 
         // Fund users with HAP and max-approve profile
         hapToken.mint(user1, 10_000 * 10 ** 18);
@@ -60,11 +63,16 @@ contract HeroArenaProfileTest is Test {
         profile.createProfile(1);
     }
 
-    /// Mint an NFT to `user` and approve the profile contract.
-    function _mintNFT(address user) internal returns (uint256 tokenId) {
+    function _mintAvatar(address user) internal returns (uint256 tokenId) {
         tokenId = avatarNFT.mint(user);
         vm.prank(user);
         avatarNFT.setApprovalForAll(address(profile), true);
+    }
+
+    function _mintFrame(address user) internal returns (uint256 tokenId) {
+        tokenId = frameNFT.mint(user);
+        vm.prank(user);
+        frameNFT.setApprovalForAll(address(profile), true);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -94,10 +102,8 @@ contract HeroArenaProfileTest is Test {
     }
 
     function test_AddTeam_RevertsIfTitleTooLong() public {
-        // exactly 20 bytes → fails "< 20"
         vm.expectRevert();
-        profile.addTeam("TeamAlphaBetaGamma12", "desc"); // 19 chars is fine; 20 fails
-        // Note: 19-char title is the max allowed
+        profile.addTeam("TeamAlphaBetaGamma12", "desc");
     }
 
     function test_AddTeam_RevertsIfNotOwner() public {
@@ -202,8 +208,7 @@ contract HeroArenaProfileTest is Test {
     // ═══════════════════════════════════════════════════════════════════════════
 
     function test_ClaimFee_TransfersHAP() public {
-        _register(user1); // deposits FEE_REGISTER to contract
-
+        _register(user1);
         uint256 balBefore = hapToken.balanceOf(owner);
         profile.claimFee(FEE_REGISTER);
         assertEq(hapToken.balanceOf(owner), balBefore + FEE_REGISTER);
@@ -278,81 +283,76 @@ contract HeroArenaProfileTest is Test {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // updateProfile
+    // updateAvatar
     // ═══════════════════════════════════════════════════════════════════════════
 
-    function test_UpdateProfile_FirstTime_SetsAvatar() public {
+    function test_UpdateAvatar_FirstTime_SetsAvatar() public {
         _register(user1);
-        uint256 tokenId = _mintNFT(user1);
+        uint256 tokenId = _mintAvatar(user1);
 
         vm.prank(user1);
-        profile.updateProfile(address(avatarNFT), tokenId);
+        profile.updateAvatar(address(avatarNFT), tokenId);
 
         (,,, address avatar, uint256 tid) = profile.getUserProfile(user1);
         assertEq(avatar,  address(avatarNFT));
         assertEq(tid,     tokenId);
-        // NFT now held by profile
         assertEq(avatarNFT.ownerOf(tokenId), address(profile));
     }
 
-    function test_UpdateProfile_ReplacesNFT_ReturnsOld() public {
+    function test_UpdateAvatar_ReplacesNFT_ReturnsOld() public {
         _register(user1);
-        uint256 tokenId1 = _mintNFT(user1);
-        uint256 tokenId2 = _mintNFT(user1);
+        uint256 tokenId1 = _mintAvatar(user1);
+        uint256 tokenId2 = _mintAvatar(user1);
 
         vm.prank(user1);
-        profile.updateProfile(address(avatarNFT), tokenId1);
-
+        profile.updateAvatar(address(avatarNFT), tokenId1);
         vm.prank(user1);
-        profile.updateProfile(address(avatarNFT), tokenId2);
+        profile.updateAvatar(address(avatarNFT), tokenId2);
 
-        // Old NFT returned to user
         assertEq(avatarNFT.ownerOf(tokenId1), user1);
-        // New NFT held by profile
         assertEq(avatarNFT.ownerOf(tokenId2), address(profile));
     }
 
-    function test_UpdateProfile_EmitsEvent() public {
+    function test_UpdateAvatar_EmitsEvent() public {
         _register(user1);
-        uint256 tokenId = _mintNFT(user1);
+        uint256 tokenId = _mintAvatar(user1);
 
         vm.expectEmit(true, false, false, true);
-        emit HeroArenaProfile.UserUpdate(user1, address(avatarNFT), tokenId);
+        emit HeroArenaProfile.UserAvatarUpdate(user1, address(avatarNFT), tokenId);
         vm.prank(user1);
-        profile.updateProfile(address(avatarNFT), tokenId);
+        profile.updateAvatar(address(avatarNFT), tokenId);
     }
 
-    function test_UpdateProfile_DeductsHAPFee() public {
+    function test_UpdateAvatar_DeductsHAPFee() public {
         _register(user1);
-        uint256 tokenId = _mintNFT(user1);
+        uint256 tokenId = _mintAvatar(user1);
 
         uint256 balBefore = hapToken.balanceOf(user1);
         vm.prank(user1);
-        profile.updateProfile(address(avatarNFT), tokenId);
+        profile.updateAvatar(address(avatarNFT), tokenId);
         assertEq(hapToken.balanceOf(user1), balBefore - FEE_UPDATE);
     }
 
-    function test_UpdateProfile_RevertsIfNotRegistered() public {
-        uint256 tokenId = _mintNFT(user1);
+    function test_UpdateAvatar_RevertsIfNotRegistered() public {
+        uint256 tokenId = _mintAvatar(user1);
         vm.prank(user1);
         vm.expectRevert("User not registered");
-        profile.updateProfile(address(avatarNFT), tokenId);
+        profile.updateAvatar(address(avatarNFT), tokenId);
     }
 
-    function test_UpdateProfile_RevertsOnInvalidAvatarAddress() public {
+    function test_UpdateAvatar_RevertsOnInvalidAvatarAddress() public {
         _register(user1);
         vm.prank(user1);
         vm.expectRevert("Avatar address invalid");
-        profile.updateProfile(address(0xdead), 1);
+        profile.updateAvatar(address(0xdead), 1);
     }
 
-    function test_UpdateProfile_RevertsIfNotNFTOwner() public {
+    function test_UpdateAvatar_RevertsIfNotNFTOwner() public {
         _register(user1);
-        uint256 tokenId = avatarNFT.mint(user2); // minted to user2, not user1
-
+        uint256 tokenId = avatarNFT.mint(user2);
         vm.prank(user1);
         vm.expectRevert("Only owner can transfer his/her NFT");
-        profile.updateProfile(address(avatarNFT), tokenId);
+        profile.updateAvatar(address(avatarNFT), tokenId);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -366,8 +366,6 @@ contract HeroArenaProfileTest is Test {
     }
 
     function test_AddAvatarAddress_RevertsOnNonERC721() public {
-        // MockNonERC721 has supportsInterface() but returns false,
-        // so the require("Not ERC721") is reached with proper revert data.
         MockNonERC721 fake = new MockNonERC721();
         vm.expectRevert("Not ERC721");
         profile.addAvatarAddress(address(fake));
@@ -378,6 +376,99 @@ contract HeroArenaProfileTest is Test {
         vm.prank(user1);
         vm.expectRevert();
         profile.addAvatarAddress(address(nft2));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // updateFrame
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    function test_UpdateFrame_FirstTime_SetsFrame() public {
+        _register(user1);
+        uint256 tokenId = _mintFrame(user1);
+
+        vm.prank(user1);
+        profile.updateFrame(address(frameNFT), tokenId);
+
+        assertEq(frameNFT.ownerOf(tokenId), address(profile));
+    }
+
+    function test_UpdateFrame_ReplacesNFT_ReturnsOld() public {
+        _register(user1);
+        uint256 tokenId1 = _mintFrame(user1);
+        uint256 tokenId2 = _mintFrame(user1);
+
+        vm.prank(user1);
+        profile.updateFrame(address(frameNFT), tokenId1);
+        vm.prank(user1);
+        profile.updateFrame(address(frameNFT), tokenId2);
+
+        assertEq(frameNFT.ownerOf(tokenId1), user1);
+        assertEq(frameNFT.ownerOf(tokenId2), address(profile));
+    }
+
+    function test_UpdateFrame_EmitsEvent() public {
+        _register(user1);
+        uint256 tokenId = _mintFrame(user1);
+
+        vm.expectEmit(true, false, false, true);
+        emit HeroArenaProfile.UserFrameUpdate(user1, address(frameNFT), tokenId);
+        vm.prank(user1);
+        profile.updateFrame(address(frameNFT), tokenId);
+    }
+
+    function test_UpdateFrame_DeductsHAPFee() public {
+        _register(user1);
+        uint256 tokenId = _mintFrame(user1);
+
+        uint256 balBefore = hapToken.balanceOf(user1);
+        vm.prank(user1);
+        profile.updateFrame(address(frameNFT), tokenId);
+        assertEq(hapToken.balanceOf(user1), balBefore - FEE_UPDATE);
+    }
+
+    function test_UpdateFrame_RevertsIfNotRegistered() public {
+        uint256 tokenId = _mintFrame(user1);
+        vm.prank(user1);
+        vm.expectRevert("User not registered");
+        profile.updateFrame(address(frameNFT), tokenId);
+    }
+
+    function test_UpdateFrame_RevertsOnInvalidFrameAddress() public {
+        _register(user1);
+        vm.prank(user1);
+        vm.expectRevert("Frame address invalid");
+        profile.updateFrame(address(0xdead), 1);
+    }
+
+    function test_UpdateFrame_RevertsIfNotNFTOwner() public {
+        _register(user1);
+        uint256 tokenId = frameNFT.mint(user2);
+        vm.prank(user1);
+        vm.expectRevert("Only owner can transfer his/her NFT");
+        profile.updateFrame(address(frameNFT), tokenId);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // addFrameAddress
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    function test_AddFrameAddress_GrantsRole() public {
+        MockERC721 nft2 = new MockERC721();
+        profile.addFrameAddress(address(nft2));
+        assertTrue(profile.hasRole(profile.FRAME_ROLE(), address(nft2)));
+    }
+
+    function test_AddFrameAddress_RevertsOnNonERC721() public {
+        MockNonERC721 fake = new MockNonERC721();
+        vm.expectRevert("Not ERC721");
+        profile.addFrameAddress(address(fake));
+    }
+
+    function test_AddFrameAddress_RevertsIfNotOwner() public {
+        MockERC721 nft2 = new MockERC721();
+        vm.prank(user1);
+        vm.expectRevert();
+        profile.addFrameAddress(address(nft2));
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -500,7 +591,7 @@ contract HeroArenaProfileTest is Test {
         _register(user1);
         address[] memory users = new address[](2);
         users[0] = user1;
-        users[1] = user2; // not registered
+        users[1] = user2;
 
         vm.prank(pointRole);
         profile.increaseUserPointsBatch(users, 100, 1);

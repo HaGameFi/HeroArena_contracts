@@ -11,6 +11,7 @@ describe("HeroArenaProfile", async function () {
   const { viem } = await network.connect();
   const [ownerClient, user1Client, user2Client, pointRoleClient, specialRoleClient] =
     await viem.getWalletClients();
+  const publicClient = await viem.getPublicClient();
 
   const owner       = ownerClient.account.address;
   const user1       = user1Client.account.address;
@@ -18,7 +19,7 @@ describe("HeroArenaProfile", async function () {
   const pointRole   = pointRoleClient.account.address;
   const specialRole = specialRoleClient.account.address;
 
-  // ─── deploy helpers ──────────────────────────────────────────────────────────
+  // ─── deploy helpers ───────────────────────────────────────────────────────
 
   async function deployAll() {
     const hapToken  = await viem.deployContract("MockERC20");
@@ -28,50 +29,42 @@ describe("HeroArenaProfile", async function () {
       FEE_UPDATE,
     ]);
     const avatarNFT = await viem.deployContract("MockERC721");
+    const frameNFT  = await viem.deployContract("MockERC721");
 
-    // Roles
     const POINT_ROLE   = await profile.read.POINT_ROLE();
     const SPECIAL_ROLE = await profile.read.SPECIAL_ROLE();
     const AVATAR_ROLE  = await profile.read.AVATAR_ROLE();
+    const FRAME_ROLE   = await profile.read.FRAME_ROLE();
+
     await profile.write.grantRole([POINT_ROLE,   pointRole]);
     await profile.write.grantRole([SPECIAL_ROLE, specialRole]);
 
-    // Register avatar NFT
     await profile.write.addAvatarAddress([avatarNFT.address]);
+    await profile.write.addFrameAddress([frameNFT.address]);
 
-    // Fund users and approve
     await hapToken.write.mint([user1, 10_000n * 10n ** 18n]);
     await hapToken.write.mint([user2, 10_000n * 10n ** 18n]);
     await hapToken.write.approve([profile.address, maxUint256], { account: user1Client.account });
     await hapToken.write.approve([profile.address, maxUint256], { account: user2Client.account });
 
-    // Default team
     await profile.write.addTeam(["TeamAlpha", "Alpha team"]);
 
-    return { hapToken, profile, avatarNFT, POINT_ROLE, SPECIAL_ROLE, AVATAR_ROLE };
+    return { hapToken, profile, avatarNFT, frameNFT, POINT_ROLE, SPECIAL_ROLE, AVATAR_ROLE, FRAME_ROLE };
   }
 
   async function register(profile: any, userClient: any) {
     await profile.write.createProfile([1n], { account: userClient.account });
   }
 
-  async function mintNFT(avatarNFT: any, profile: any, userClient: any) {
-    await avatarNFT.write.mint([userClient.account.address]);
-    const tokenId = await avatarNFT.read.balanceOf([userClient.account.address])
-      .then(() => 0n); // fallback; we track via events below
-    // Approve profile for all NFTs
-    await avatarNFT.write.setApprovalForAll([profile.address, true], {
+  async function mintNFT(nftContract: any, profile: any, userClient: any): Promise<bigint> {
+    await nftContract.write.setApprovalForAll([profile.address, true], {
       account: userClient.account,
     });
-    // Return the latest tokenId by calling mint and capturing return
-    // Since mint auto-increments, we track nextTokenId as a separate read
-    const publicClient = await viem.getPublicClient();
-    const mintTx = await avatarNFT.write.mint([userClient.account.address]);
-    const receipt = await publicClient.waitForTransactionReceipt({ hash: mintTx });
-    // Parse Transfer event to get tokenId
-    const logs = await publicClient.getContractEvents({
-      address: avatarNFT.address,
-      abi: avatarNFT.abi,
+    const hash    = await nftContract.write.mint([userClient.account.address]);
+    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+    const logs    = await publicClient.getContractEvents({
+      address:   nftContract.address,
+      abi:       nftContract.abi,
       eventName: "Transfer",
       fromBlock: receipt.blockNumber,
     });
@@ -124,8 +117,8 @@ describe("HeroArenaProfile", async function () {
     it("returns correct team data", async function () {
       const { profile } = await deployAll();
       const [title, desc, , , joinable] = await profile.read.getTeam([1n]);
-      assert.equal(title,   "TeamAlpha");
-      assert.equal(desc,    "Alpha team");
+      assert.equal(title,    "TeamAlpha");
+      assert.equal(desc,     "Alpha team");
       assert.equal(joinable, true);
     });
 
@@ -230,7 +223,6 @@ describe("HeroArenaProfile", async function () {
     it("transfers HAP to owner", async function () {
       const { hapToken, profile } = await deployAll();
       await register(profile, user1Client);
-
       const balBefore = await hapToken.read.balanceOf([owner]);
       await profile.write.claimFee([FEE_REGISTER]);
       assert.equal(await hapToken.read.balanceOf([owner]), balBefore + FEE_REGISTER);
@@ -316,22 +308,26 @@ describe("HeroArenaProfile", async function () {
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // updateProfile
+  // updateAvatar
   // ═══════════════════════════════════════════════════════════════════════════
 
-  describe("updateProfile", async function () {
+  describe("updateAvatar", async function () {
     it("sets avatar on first update", async function () {
       const { profile, avatarNFT } = await deployAll();
       await register(profile, user1Client);
       const tokenId = await mintNFT(avatarNFT, profile, user1Client);
 
-      await profile.write.updateProfile([avatarNFT.address, tokenId], {
+      await profile.write.updateAvatar([avatarNFT.address, tokenId], {
         account: user1Client.account,
       });
 
       const [, , , avatar, tid] = await profile.read.getUserProfile([user1]);
       assert.equal(avatar, getAddress(avatarNFT.address));
       assert.equal(tid, tokenId);
+      assert.equal(
+        (await avatarNFT.read.ownerOf([tokenId])).toLowerCase(),
+        profile.address.toLowerCase(),
+      );
     });
 
     it("returns old NFT when replacing", async function () {
@@ -340,39 +336,44 @@ describe("HeroArenaProfile", async function () {
       const tokenId1 = await mintNFT(avatarNFT, profile, user1Client);
       const tokenId2 = await mintNFT(avatarNFT, profile, user1Client);
 
-      await profile.write.updateProfile([avatarNFT.address, tokenId1], {
-        account: user1Client.account,
-      });
-      await profile.write.updateProfile([avatarNFT.address, tokenId2], {
-        account: user1Client.account,
-      });
+      await profile.write.updateAvatar([avatarNFT.address, tokenId1], { account: user1Client.account });
+      await profile.write.updateAvatar([avatarNFT.address, tokenId2], { account: user1Client.account });
 
-      assert.equal(await avatarNFT.read.ownerOf([tokenId1]), getAddress(user1));
-      assert.equal(await avatarNFT.read.ownerOf([tokenId2]), getAddress(profile.address));
+      assert.equal((await avatarNFT.read.ownerOf([tokenId1])).toLowerCase(), user1.toLowerCase());
+      assert.equal(
+        (await avatarNFT.read.ownerOf([tokenId2])).toLowerCase(),
+        profile.address.toLowerCase(),
+      );
     });
 
-    it("emits UserUpdate", async function () {
+    it("emits UserAvatarUpdate", async function () {
       const { profile, avatarNFT } = await deployAll();
       await register(profile, user1Client);
       const tokenId = await mintNFT(avatarNFT, profile, user1Client);
 
       await viem.assertions.emitWithArgs(
-        profile.write.updateProfile([avatarNFT.address, tokenId], {
-          account: user1Client.account,
-        }),
+        profile.write.updateAvatar([avatarNFT.address, tokenId], { account: user1Client.account }),
         profile,
-        "UserUpdate",
+        "UserAvatarUpdate",
         [getAddress(user1), getAddress(avatarNFT.address), tokenId],
       );
+    });
+
+    it("deducts HAP fee", async function () {
+      const { hapToken, profile, avatarNFT } = await deployAll();
+      await register(profile, user1Client);
+      const tokenId  = await mintNFT(avatarNFT, profile, user1Client);
+      const balBefore = await hapToken.read.balanceOf([user1]);
+
+      await profile.write.updateAvatar([avatarNFT.address, tokenId], { account: user1Client.account });
+      assert.equal(await hapToken.read.balanceOf([user1]), balBefore - FEE_UPDATE);
     });
 
     it("reverts if not registered", async function () {
       const { profile, avatarNFT } = await deployAll();
       const tokenId = await mintNFT(avatarNFT, profile, user1Client);
       await assert.rejects(
-        profile.write.updateProfile([avatarNFT.address, tokenId], {
-          account: user1Client.account,
-        }),
+        profile.write.updateAvatar([avatarNFT.address, tokenId], { account: user1Client.account }),
         /User not registered/,
       );
     });
@@ -381,10 +382,108 @@ describe("HeroArenaProfile", async function () {
       const { profile } = await deployAll();
       await register(profile, user1Client);
       await assert.rejects(
-        profile.write.updateProfile(["0x000000000000000000000000000000000000dEaD", 1n], {
+        profile.write.updateAvatar(["0x000000000000000000000000000000000000dEaD", 1n], {
           account: user1Client.account,
         }),
         /Avatar address invalid/,
+      );
+    });
+
+    it("reverts if not NFT owner", async function () {
+      const { profile, avatarNFT } = await deployAll();
+      await register(profile, user1Client);
+      const tokenId = await mintNFT(avatarNFT, profile, user2Client);
+      await assert.rejects(
+        profile.write.updateAvatar([avatarNFT.address, tokenId], { account: user1Client.account }),
+        /Only owner can transfer his\/her NFT/,
+      );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // updateFrame
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("updateFrame", async function () {
+    it("sets frame on first update", async function () {
+      const { profile, frameNFT } = await deployAll();
+      await register(profile, user1Client);
+      const tokenId = await mintNFT(frameNFT, profile, user1Client);
+
+      await profile.write.updateFrame([frameNFT.address, tokenId], { account: user1Client.account });
+
+      assert.equal(
+        (await frameNFT.read.ownerOf([tokenId])).toLowerCase(),
+        profile.address.toLowerCase(),
+      );
+    });
+
+    it("returns old frame NFT when replacing", async function () {
+      const { profile, frameNFT } = await deployAll();
+      await register(profile, user1Client);
+      const tokenId1 = await mintNFT(frameNFT, profile, user1Client);
+      const tokenId2 = await mintNFT(frameNFT, profile, user1Client);
+
+      await profile.write.updateFrame([frameNFT.address, tokenId1], { account: user1Client.account });
+      await profile.write.updateFrame([frameNFT.address, tokenId2], { account: user1Client.account });
+
+      assert.equal((await frameNFT.read.ownerOf([tokenId1])).toLowerCase(), user1.toLowerCase());
+      assert.equal(
+        (await frameNFT.read.ownerOf([tokenId2])).toLowerCase(),
+        profile.address.toLowerCase(),
+      );
+    });
+
+    it("emits UserFrameUpdate", async function () {
+      const { profile, frameNFT } = await deployAll();
+      await register(profile, user1Client);
+      const tokenId = await mintNFT(frameNFT, profile, user1Client);
+
+      await viem.assertions.emitWithArgs(
+        profile.write.updateFrame([frameNFT.address, tokenId], { account: user1Client.account }),
+        profile,
+        "UserFrameUpdate",
+        [getAddress(user1), getAddress(frameNFT.address), tokenId],
+      );
+    });
+
+    it("deducts HAP fee", async function () {
+      const { hapToken, profile, frameNFT } = await deployAll();
+      await register(profile, user1Client);
+      const tokenId   = await mintNFT(frameNFT, profile, user1Client);
+      const balBefore = await hapToken.read.balanceOf([user1]);
+
+      await profile.write.updateFrame([frameNFT.address, tokenId], { account: user1Client.account });
+      assert.equal(await hapToken.read.balanceOf([user1]), balBefore - FEE_UPDATE);
+    });
+
+    it("reverts if not registered", async function () {
+      const { profile, frameNFT } = await deployAll();
+      const tokenId = await mintNFT(frameNFT, profile, user1Client);
+      await assert.rejects(
+        profile.write.updateFrame([frameNFT.address, tokenId], { account: user1Client.account }),
+        /User not registered/,
+      );
+    });
+
+    it("reverts on invalid frame address", async function () {
+      const { profile } = await deployAll();
+      await register(profile, user1Client);
+      await assert.rejects(
+        profile.write.updateFrame(["0x000000000000000000000000000000000000dEaD", 1n], {
+          account: user1Client.account,
+        }),
+        /Frame address invalid/,
+      );
+    });
+
+    it("reverts if not NFT owner", async function () {
+      const { profile, frameNFT } = await deployAll();
+      await register(profile, user1Client);
+      const tokenId = await mintNFT(frameNFT, profile, user2Client);
+      await assert.rejects(
+        profile.write.updateFrame([frameNFT.address, tokenId], { account: user1Client.account }),
+        /Only owner can transfer his\/her NFT/,
       );
     });
   });
@@ -395,7 +494,7 @@ describe("HeroArenaProfile", async function () {
 
   describe("addAvatarAddress", async function () {
     it("grants AVATAR_ROLE", async function () {
-      const { profile, avatarNFT, AVATAR_ROLE } = await deployAll();
+      const { profile, AVATAR_ROLE } = await deployAll();
       const nft2 = await viem.deployContract("MockERC721");
       await profile.write.addAvatarAddress([nft2.address]);
       assert.equal(await profile.read.hasRole([AVATAR_ROLE, nft2.address]), true);
@@ -403,8 +502,6 @@ describe("HeroArenaProfile", async function () {
 
     it("reverts on non-ERC721 address", async function () {
       const { profile } = await deployAll();
-      // MockNonERC721 has supportsInterface() but returns false,
-      // so the require("Not ERC721") is reached with proper revert data.
       const fake = await viem.deployContract("MockNonERC721");
       await assert.rejects(
         profile.write.addAvatarAddress([fake.address]),
@@ -417,6 +514,36 @@ describe("HeroArenaProfile", async function () {
       const nft2 = await viem.deployContract("MockERC721");
       await assert.rejects(
         profile.write.addAvatarAddress([nft2.address], { account: user1Client.account }),
+      );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // addFrameAddress
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("addFrameAddress", async function () {
+    it("grants FRAME_ROLE", async function () {
+      const { profile, FRAME_ROLE } = await deployAll();
+      const nft2 = await viem.deployContract("MockERC721");
+      await profile.write.addFrameAddress([nft2.address]);
+      assert.equal(await profile.read.hasRole([FRAME_ROLE, nft2.address]), true);
+    });
+
+    it("reverts on non-ERC721 address", async function () {
+      const { profile } = await deployAll();
+      const fake = await viem.deployContract("MockNonERC721");
+      await assert.rejects(
+        profile.write.addFrameAddress([fake.address]),
+        /Not ERC721/,
+      );
+    });
+
+    it("reverts if not owner", async function () {
+      const { profile } = await deployAll();
+      const nft2 = await viem.deployContract("MockERC721");
+      await assert.rejects(
+        profile.write.addFrameAddress([nft2.address], { account: user1Client.account }),
       );
     });
   });
@@ -500,9 +627,7 @@ describe("HeroArenaProfile", async function () {
     it("increaseUserPoints adds points", async function () {
       const { profile } = await deployAll();
       await register(profile, user1Client);
-      await profile.write.increaseUserPoints([user1, 500n, 1n], {
-        account: pointRoleClient.account,
-      });
+      await profile.write.increaseUserPoints([user1, 500n, 1n], { account: pointRoleClient.account });
       const [, pts] = await profile.read.getUserProfile([user1]);
       assert.equal(pts, 500n);
     });
@@ -519,12 +644,8 @@ describe("HeroArenaProfile", async function () {
     it("decreaseUserPoints subtracts points", async function () {
       const { profile } = await deployAll();
       await register(profile, user1Client);
-      await profile.write.increaseUserPoints([user1, 500n, 1n], {
-        account: pointRoleClient.account,
-      });
-      await profile.write.decreaseUserPoints([user1, 200n], {
-        account: pointRoleClient.account,
-      });
+      await profile.write.increaseUserPoints([user1, 500n, 1n], { account: pointRoleClient.account });
+      await profile.write.decreaseUserPoints([user1, 200n], { account: pointRoleClient.account });
       const [, pts] = await profile.read.getUserProfile([user1]);
       assert.equal(pts, 300n);
     });
@@ -532,7 +653,6 @@ describe("HeroArenaProfile", async function () {
     it("increaseUserPointsBatch skips unregistered users", async function () {
       const { profile } = await deployAll();
       await register(profile, user1Client);
-      // user2 is NOT registered
       await profile.write.increaseUserPointsBatch([[user1, user2], 100n, 1n], {
         account: pointRoleClient.account,
       });
@@ -542,9 +662,7 @@ describe("HeroArenaProfile", async function () {
 
     it("increaseTeamPoints adds to team", async function () {
       const { profile } = await deployAll();
-      await profile.write.increaseTeamPoints([1n, 1000n, 1n], {
-        account: pointRoleClient.account,
-      });
+      await profile.write.increaseTeamPoints([1n, 1000n, 1n], { account: pointRoleClient.account });
       const [, , , teamPts] = await profile.read.getTeam([1n]);
       assert.equal(teamPts, 1000n);
     });
@@ -559,12 +677,8 @@ describe("HeroArenaProfile", async function () {
 
     it("decreaseTeamPoints subtracts from team", async function () {
       const { profile } = await deployAll();
-      await profile.write.increaseTeamPoints([1n, 1000n, 1n], {
-        account: pointRoleClient.account,
-      });
-      await profile.write.decreaseTeamPoints([1n, 400n], {
-        account: pointRoleClient.account,
-      });
+      await profile.write.increaseTeamPoints([1n, 1000n, 1n], { account: pointRoleClient.account });
+      await profile.write.decreaseTeamPoints([1n, 400n], { account: pointRoleClient.account });
       const [, , , teamPts] = await profile.read.getTeam([1n]);
       assert.equal(teamPts, 600n);
     });

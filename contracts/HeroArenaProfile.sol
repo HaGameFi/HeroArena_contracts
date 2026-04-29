@@ -19,6 +19,7 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
     IERC20 public HapToken;
 
     bytes32 public constant AVATAR_ROLE = keccak256("AVATAR_ROLE");
+    bytes32 public constant FRAME_ROLE = keccak256("FRAME_ROLE");
     bytes32 public constant POINT_ROLE = keccak256("POINT_ROLE");
     bytes32 public constant SPECIAL_ROLE = keccak256("SPECIAL_ROLE");
 
@@ -43,6 +44,8 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
         uint256 teamId;
         address avatarAddress;
         uint256 tokenId;
+        address frameAddress;
+        uint256 frameTokenId;
     }
 
     mapping(uint256 => Team) private _teamMapping;
@@ -57,7 +60,8 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
     event UpdateFeeCost(address indexed owner, uint256 newFeeToRegister, uint256 newFeeToUpdate);
     event UserChangeTeam(address indexed user, uint256 previousTeamId, uint256 newTeamId);
     event UserNew(address indexed user, uint256 teamId);
-    event UserUpdate(address indexed user, address avatarAddress, uint256 tokenId);
+    event UserAvatarUpdate(address indexed user, address avatarAddress, uint256 tokenId);
+    event UserFrameUpdate(address indexed user, address frameAddress, uint256 frameTokenId);
     event UserPointIncrease(address indexed user, uint256 numberOfPoints, uint256 indexed campaignId);
     event UserPointIncreaseBatch(address[] users, uint256 numberOfPoints, uint256 indexed campaignId);
 
@@ -189,7 +193,9 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
             selfPoints: 0,
             teamId: _teamId,
             avatarAddress: address(0),
-            tokenId: 0
+            tokenId: 0,
+            frameAddress: address(0),
+            frameTokenId: 0
         });
 
         // Update user's registration status
@@ -209,9 +215,9 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
     }
 
     /**
-     * To update a user profile. It sends the HAP to this address.
+     * To update a user's avatar. It sends the HAP to this address.
      */
-    function updateProfile(address _avatarAddress, uint256 _tokenId) external {
+    function updateAvatar(address _avatarAddress, uint256 _tokenId) external {
         // Checks
         require(hasRegistered[msg.sender], "User not registered");
         require(hasRole(AVATAR_ROLE, _avatarAddress), "Avatar address invalid");
@@ -234,7 +240,36 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
             IERC721(_previousAvatarAddress).safeTransferFrom(address(this), msg.sender, _previousTokenId);
         }
 
-        emit UserUpdate(msg.sender, _avatarAddress, _tokenId);
+        emit UserAvatarUpdate(msg.sender, _avatarAddress, _tokenId);
+    }
+
+    /**
+     * To update a user's frame. It sends the HAP to this address.
+     */
+    function updateFrame(address _frameAddress, uint256 _frameTokenId) external {
+        // Checks
+        require(hasRegistered[msg.sender], "User not registered");
+        require(hasRole(FRAME_ROLE, _frameAddress), "Frame address invalid");
+
+        address _previousFrameAddress = _userMapping[msg.sender].frameAddress;
+        uint256 _previousFrameTokenId = _userMapping[msg.sender].frameTokenId;
+
+        IERC721 _frameToken = IERC721(_frameAddress);
+        require(msg.sender == _frameToken.ownerOf(_frameTokenId), "Only owner can transfer his/her NFT");
+
+        // Effects（先更新状态，防止重入）
+        _userMapping[msg.sender].frameAddress = _frameAddress;
+        _userMapping[msg.sender].frameTokenId = _frameTokenId;
+
+        // Interactions（后执行外部调用）
+        _frameToken.safeTransferFrom(msg.sender, address(this), _frameTokenId);
+        HapToken.safeTransferFrom(msg.sender, address(this), feeToUpdate);
+
+        if (_previousFrameAddress != address(0)) {
+            IERC721(_previousFrameAddress).safeTransferFrom(address(this), msg.sender, _previousFrameTokenId);
+        }
+
+        emit UserFrameUpdate(msg.sender, _frameAddress, _frameTokenId);
     }
 
     /**
@@ -243,6 +278,14 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
     function addAvatarAddress(address _avatarAddress) external onlyOwner {
         require(IERC721(_avatarAddress).supportsInterface(0x80ac58cd), "Not ERC721");
         _grantRole(AVATAR_ROLE, _avatarAddress);
+    }
+
+    /**
+     * To add a frame NFT address for users to set their profile.
+     */
+    function addFrameAddress(address _frameAddress) external onlyOwner {
+        require(IERC721(_frameAddress).supportsInterface(0x80ac58cd), "Not ERC721");
+        _grantRole(FRAME_ROLE, _frameAddress);
     }
 
     /**
