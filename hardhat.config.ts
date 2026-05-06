@@ -34,10 +34,22 @@ export default defineConfig({
       url: configVariable("SEPOLIA_RPC_URL"),
       accounts: [configVariable("SEPOLIA_PRIVATE_KEY")],
     },
+    bscTestnet: {
+      type: "http",
+      chainType: "l1",
+      url: configVariable("BSC_TESTNET_RPC_URL"),
+      accounts: [configVariable("BSC_PRIVATE_KEY")],
+    },
+    // bscMainnet: {
+    //   type: "http",
+    //   chainType: "l1",
+    //   url: configVariable("BSC_MAINNET_RPC_URL"),
+    //   accounts: [configVariable("BSC_PRIVATE_KEY")],
+    // },
   },
   verify: {
     etherscan: {
-      apiKey: configVariable("ETHERSCAN_API_KEY"),
+      apiKey: configVariable("BSCSCAN_API_KEY"),
     }
   }
 });
