@@ -7,7 +7,6 @@ import { keccak256, toBytes, zeroAddress, parseEther, maxUint256 } from "viem";
 const LIQUIDATOR_ROLE = keccak256(toBytes("LIQUIDATOR_ROLE"));
 
 const BET_AMOUNT   = parseEther("1");
-const FEE_AMOUNT   = parseEther("0.1");
 const BONUS_AMOUNT = parseEther("0.5");
 
 describe("HeroArenaBattle", async function () {
@@ -29,7 +28,6 @@ describe("HeroArenaBattle", async function () {
     const hapToken   = await viem.deployContract("MockERC20");
     const profile    = await viem.deployContract("HeroArenaProfile", [hapToken.address, 0n, 0n]);
     const betToken   = await viem.deployContract("MockERC20");
-    const feeToken   = await viem.deployContract("MockERC20");
     const bonusToken = await viem.deployContract("MockERC20");
 
     await profile.write.addTeam(["Warriors", "Warriors team"]);
@@ -42,15 +40,11 @@ describe("HeroArenaBattle", async function () {
 
     await betToken.write.mint([user1, parseEther("10000")]);
     await betToken.write.mint([user2, parseEther("10000")]);
-    await feeToken.write.mint([user1, parseEther("10000")]);
-    await feeToken.write.mint([user2, parseEther("10000")]);
 
     await betToken.write.approve([battle.address, maxUint256], { account: user1Client.account });
     await betToken.write.approve([battle.address, maxUint256], { account: user2Client.account });
-    await feeToken.write.approve([battle.address, maxUint256], { account: user1Client.account });
-    await feeToken.write.approve([battle.address, maxUint256], { account: user2Client.account });
 
-    return { profile, battle, betToken, feeToken, bonusToken };
+    return { profile, battle, betToken, bonusToken };
   }
 
   async function deployWithNative() {
@@ -179,26 +173,22 @@ describe("HeroArenaBattle", async function () {
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // updateFeeAndBonusTokenAddressWithAmount
+  // updateBonusToken
   // ═══════════════════════════════════════════════════════════════════════════
 
-  describe("updateFeeAndBonusTokenAddressWithAmount", async function () {
-    it("sets token addresses and amounts", async function () {
-      const { battle, feeToken, bonusToken } = await deploy();
-      await battle.write.updateFeeAndBonusTokenAddressWithAmount([
-        feeToken.address, FEE_AMOUNT, bonusToken.address, BONUS_AMOUNT,
-      ]);
-      assert.equal((await battle.read.tokenAddresses([0n])).toLowerCase(), feeToken.address.toLowerCase());
-      assert.equal((await battle.read.tokenAddresses([1n])).toLowerCase(), bonusToken.address.toLowerCase());
-      assert.equal(await battle.read.tokenAmounts([0n]), FEE_AMOUNT);
-      assert.equal(await battle.read.tokenAmounts([1n]), BONUS_AMOUNT);
+  describe("updateBonusToken", async function () {
+    it("sets bonus token and amount", async function () {
+      const { battle, bonusToken } = await deploy();
+      await battle.write.updateBonusToken([bonusToken.address, BONUS_AMOUNT]);
+      assert.equal((await battle.read.bonusToken()).toLowerCase(), bonusToken.address.toLowerCase());
+      assert.equal(await battle.read.bonusAmount(), BONUS_AMOUNT);
     });
 
     it("reverts if not owner", async function () {
-      const { battle, feeToken } = await deploy();
+      const { battle, bonusToken } = await deploy();
       await assert.rejects(
-        battle.write.updateFeeAndBonusTokenAddressWithAmount(
-          [feeToken.address, 1n, zeroAddress, 0n],
+        battle.write.updateBonusToken(
+          [bonusToken.address, BONUS_AMOUNT],
           { account: strangerClient.account },
         ),
         /OwnableUnauthorizedAccount/,
@@ -409,31 +399,6 @@ describe("HeroArenaBattle", async function () {
       );
     });
 
-    it("collects feeToken on creation", async function () {
-      const { battle, betToken, feeToken } = await deployWithERC20();
-      await battle.write.updateFeeAndBonusTokenAddressWithAmount([
-        feeToken.address, FEE_AMOUNT, zeroAddress, 0n,
-      ]);
-      await battle.write.createBattle(
-        [betToken.address, BET_AMOUNT, zeroAddress],
-        { account: user1Client.account },
-      );
-      assert.equal(await feeToken.read.balanceOf([battle.address]), FEE_AMOUNT);
-    });
-
-    it("reverts if feeAmount set but feeToken is zero address", async function () {
-      const { battle, betToken } = await deployWithERC20();
-      await battle.write.updateFeeAndBonusTokenAddressWithAmount([
-        zeroAddress, FEE_AMOUNT, zeroAddress, 0n,
-      ]);
-      await assert.rejects(
-        battle.write.createBattle(
-          [betToken.address, BET_AMOUNT, zeroAddress],
-          { account: user1Client.account },
-        ),
-        /FeeToken not configured/,
-      );
-    });
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -471,16 +436,6 @@ describe("HeroArenaBattle", async function () {
       );
       await battle.write.joinExistBattle([1n], { account: user2Client.account, value: BET_AMOUNT });
       assert.equal((await battle.read.getBattleInfo([1n])).isStarted, true);
-    });
-
-    it("collects feeToken from both players", async function () {
-      const { battle, betToken, feeToken } = await deployWithERC20();
-      await battle.write.updateFeeAndBonusTokenAddressWithAmount([
-        feeToken.address, FEE_AMOUNT, zeroAddress, 0n,
-      ]);
-      await battle.write.createBattle([betToken.address, BET_AMOUNT, zeroAddress], { account: user1Client.account });
-      await battle.write.joinExistBattle([1n], { account: user2Client.account });
-      assert.equal(await feeToken.read.balanceOf([battle.address]), FEE_AMOUNT * 2n);
     });
 
     it("succeeds even if bet token is removed from whitelist after creation", async function () {
@@ -574,9 +529,7 @@ describe("HeroArenaBattle", async function () {
     it("pays bonus token to winner", async function () {
       const { battle, bonusToken, battleId } = await startERC20Battle();
       await bonusToken.write.mint([battle.address, BONUS_AMOUNT]);
-      await battle.write.updateFeeAndBonusTokenAddressWithAmount([
-        zeroAddress, 0n, bonusToken.address, BONUS_AMOUNT,
-      ]);
+      await battle.write.updateBonusToken([bonusToken.address, BONUS_AMOUNT]);
       const before = await bonusToken.read.balanceOf([user2]);
       await battle.write.settleBattle([battleId, user2], { account: liquidatorClient.account });
       assert.equal(await bonusToken.read.balanceOf([user2]), before + BONUS_AMOUNT);
@@ -1085,9 +1038,7 @@ describe("HeroArenaBattle", async function () {
     it("settle succeeds even if bonus pool is empty", async function () {
       const { battle, bonusToken, battleId } = await startNativeBattle();
       // Configure a bonus the contract cannot pay (no deposit)
-      await battle.write.updateFeeAndBonusTokenAddressWithAmount([
-        zeroAddress, 0n, bonusToken.address, BONUS_AMOUNT,
-      ]);
+      await battle.write.updateBonusToken([bonusToken.address, BONUS_AMOUNT]);
 
       const before = await publicClient.getBalance({ address: user1 });
       await battle.write.settleBattle([battleId, user1], { account: liquidatorClient.account });
@@ -1102,9 +1053,7 @@ describe("HeroArenaBattle", async function () {
     it("bonus paid normally when pool is funded", async function () {
       const { battle, bonusToken, battleId } = await startNativeBattle();
       await bonusToken.write.mint([battle.address, BONUS_AMOUNT]);
-      await battle.write.updateFeeAndBonusTokenAddressWithAmount([
-        zeroAddress, 0n, bonusToken.address, BONUS_AMOUNT,
-      ]);
+      await battle.write.updateBonusToken([bonusToken.address, BONUS_AMOUNT]);
 
       await battle.write.settleBattle([battleId, user1], { account: liquidatorClient.account });
       assert.equal(await bonusToken.read.balanceOf([user1]), BONUS_AMOUNT);

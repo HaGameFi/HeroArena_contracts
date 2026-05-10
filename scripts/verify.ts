@@ -1,88 +1,20 @@
-// scripts/verify.ts
-// Reads the most recent deployment-*.json record and verifies all three
-// contracts on BscScan in one go.
-//
-// Usage:
-//   pnpm hardhat run scripts/verify.ts --network bscMainnet
-//
-// The --network flag is required by hardhat's runner but the actual network
-// for verification is read from the deployment JSON (so it always matches the
-// contract being verified).
+pnpm hardhat verify etherscan --network bscTestnet 0x6df1e5f15d296bc9a1134a160c24eb9ec694e694 0x02334708a7069993fe7f14cdbfc9863acf3598c4
 
-import { readFile, readdir } from "node:fs/promises";
-import { spawn } from "node:child_process";
+pnpm hardhat verify etherscan --network bscTestnet 0xe6d06029f06852468bc19bdafebb3ef45894287a 0x6df1e5f15d296bc9a1134a160c24eb9ec694e694 1778448600 0x02334708a7069993fe7f14cdbfc9863acf3598c4
 
-// ============================================================================
-// Locate the most recent deployment record in the project root
-// ============================================================================
+pnpm hardhat verify etherscan --network bscTestnet 0x0974cdeea752a32aba66496a0e1dadf476c7ebe7 0x02334708a7069993fe7f14cdbfc9863acf3598c4 0xd861Af70b9414762873Ad7387b95E96c6f6E8140
 
-const files = (await readdir("."))
-  .filter(f => /^deployment-.+\.json$/.test(f))
-  .sort()
-  .reverse();
 
-if (files.length === 0) {
-  console.error("❌  No deployment-*.json file found in project root.");
-  console.error("    Run scripts/deploy.ts first.\n");
-  process.exit(1);
-}
+pnpm hardhat ignition deploy ignition/modules/HeroArenaProfile.ts --network bscTestnet --verify
 
-const latestFile = files[0];
-const record = JSON.parse(await readFile(latestFile, "utf-8")) as {
-  network: string;
-  deployedAt: string;
-  deployer: string;
-  guardianMultisig: string;
-  tgeTimestamp: number;
-  contracts: { HapToken: string; HapVesting: string; HapTreasury: string };
-};
+pnpm hardhat ignition deploy ignition/modules/HeroArenaMiningFactoryV1.ts --network bscTestnet --verify
 
-console.log(`📄  Using deployment record: ${latestFile}`);
-console.log(`    Network:     ${record.network}`);
-console.log(`    Deployed at: ${record.deployedAt}\n`);
+> pnpm hardhat verify --network bscTestnet 0x7dee245a65533AA80a634c65c34DF83775Bc9746
 
-const NETWORK = record.network;
+pnpm hardhat ignition deploy ignition/modules/HeroArenaSwap.ts --network bscTestnet --verify
 
-// ============================================================================
-// Verify one contract via subprocess `hardhat verify`
-// ============================================================================
+pnpm hardhat ignition deploy ignition/modules/HeroArenaChallenges.ts --network bscTestnet --verify
 
-function verify(label: string, address: string, args: (string | number)[]) {
-  return new Promise<number>((resolve) => {
-    console.log(`\n${"━".repeat(60)}`);
-    console.log(`Verifying ${label}  →  ${address}`);
-    console.log("━".repeat(60));
+pnpm hardhat ignition deploy ignition/modules/HeroArenaMeetTheCouncil.ts --network bscTestnet --verify
 
-    const proc = spawn(
-      "npx",
-      ["hardhat", "verify", "--network", NETWORK, address, ...args.map(String)],
-      { stdio: "inherit" }
-    );
-
-    // Don't reject on non-zero — "already verified" exits non-zero but is fine.
-    proc.on("close", code => resolve(code ?? 0));
-  });
-}
-
-// ============================================================================
-// Run all three verifications sequentially
-// ============================================================================
-
-await verify("HapToken", record.contracts.HapToken, [record.deployer]);
-
-await verify("HapVesting", record.contracts.HapVesting, [
-  record.contracts.HapToken,
-  record.tgeTimestamp,
-  record.deployer,
-]);
-
-await verify("HapTreasury", record.contracts.HapTreasury, [
-  record.deployer,
-  record.guardianMultisig,
-]);
-
-console.log(`\n${"━".repeat(60)}`);
-console.log("✅  Verification run complete.");
-console.log("    Check BscScan to confirm each contract shows");
-console.log("    'Contract Source Code Verified' before announcing addresses.");
-console.log(`${"━".repeat(60)}\n`);
+pnpm hardhat ignition deploy ignition/modules/HeroArenaBattle.ts --network bscTestnet --verify

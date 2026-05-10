@@ -19,7 +19,7 @@ import { writeFile } from "node:fs/promises";
 
 // TGE Unix timestamp (seconds). Must be in the future.
 // Compute: Math.floor(new Date("2026-09-01T12:00:00Z").getTime() / 1000)
-const TGE_TIMESTAMP_RAW = 1778067000; // TODO: set real TGE unix timestamp (seconds)
+const TGE_TIMESTAMP_RAW = 1778448600; // TODO: set real TGE unix timestamp (seconds)
 
 // Gnosis Safe 3-of-5 multisig — will receive DEFAULT_ADMIN_ROLE on all contracts
 const ADMIN_MULTISIG    = "0x02334708A7069993fe7f14cdbfC9863AcF3598C4"; // TODO: real admin multisig

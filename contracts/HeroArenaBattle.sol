@@ -40,10 +40,10 @@ contract HeroArenaBattle is Ownable, AccessControl, ReentrancyGuard {
     // minBetAmount[0] = min ETH bet, minBetAmount[1] = min ERC20 bet
     uint256[2] public minBetAmount;
 
-    // tokenAddresses[0] = feeToken, tokenAddresses[1] = bonusToken
-    // tokenAmounts[0]   = feeAmount, tokenAmounts[1]   = bonusAmount
-    address[2] public tokenAddresses;
-    uint256[2] public tokenAmounts;
+    /// @notice Optional bonus token paid to the winner on settlement.
+    /// @dev    address(0) = bonus disabled. Pool must be funded via depositToken().
+    address public bonusToken;
+    uint256 public bonusAmount;
 
     mapping(uint256 => BattleInfo) private _battles;
     uint256 private _battleCount;
@@ -103,12 +103,10 @@ contract HeroArenaBattle is Ownable, AccessControl, ReentrancyGuard {
     event BattleEnded(uint256 indexed battleId, address indexed winner, uint256 totalReward);
     event BattleClosed(uint256 indexed battleId, address indexed closedBy, uint256 refundedAmount);
     event BattleConceded(uint256 indexed battleId, address indexed conceder, address indexed winner, uint256 totalReward);
-    event FeeTokenAndBonusTokenUpdated(
+    event BonusTokenUpdated(
         address indexed owner,
-        address feeToken,
-        uint256 feeTokenAmount,
         address bonusToken,
-        uint256 bonusTokenAmount
+        uint256 bonusAmount
     );
     event ForbiddenToPlayUpdated(address indexed owner, address indexed userAddress, bool isForbidden);
     event MinimumBetTokenAmountUpdated(address indexed owner, uint256 amount0, uint256 amount1);
@@ -158,7 +156,6 @@ contract HeroArenaBattle is Ownable, AccessControl, ReentrancyGuard {
         require(allowedBetTokens[_betTokenAddress], "Token not allowed");
 
         _receiveBet(_betTokenAddress, _betAmount, msg.sender);
-        _chargeFee(msg.sender);
 
         uint256 battleId = ++_battleCount;
         BattleInfo storage b = _battles[battleId];
@@ -191,7 +188,6 @@ contract HeroArenaBattle is Ownable, AccessControl, ReentrancyGuard {
         );
 
         _receiveBet(b.betTokenAddress, b.betAmount, msg.sender);
-        _chargeFee(msg.sender);
 
         b.isStarted = true;
         b.targetAddress = msg.sender;
@@ -256,11 +252,11 @@ contract HeroArenaBattle is Ownable, AccessControl, ReentrancyGuard {
         // M-1 fix: a bonus failure (empty pool, blacklist, weird token) MUST NOT
         // block the main settlement. Try the transfer; if it fails, just emit
         // BonusPayout(success=false) so off-chain knows it was skipped.
-        address bonusToken = tokenAddresses[1];
-        uint256 bonusAmount = tokenAmounts[1];
-        if (bonusAmount > 0 && bonusToken != address(0)) {
-            bool sent = _tryPayout(bonusToken, _winner, bonusAmount);
-            emit BonusPayout(_battleId, _winner, bonusToken, bonusAmount, sent);
+        address _bonusToken = bonusToken;
+        uint256 _bonusAmount = bonusAmount;
+        if (_bonusAmount > 0 && _bonusToken != address(0)) {
+            bool sent = _tryPayout(_bonusToken, _winner, _bonusAmount);
+            emit BonusPayout(_battleId, _winner, _bonusToken, _bonusAmount, sent);
         }
 
         // totalReward in this event is the NET amount transferred to the winner
@@ -329,23 +325,10 @@ contract HeroArenaBattle is Ownable, AccessControl, ReentrancyGuard {
         emit MinimumBetTokenAmountUpdated(msg.sender, _amount0, _amount1);
     }
 
-    function updateFeeAndBonusTokenAddressWithAmount(
-        address _feeToken,
-        uint256 _feeTokenAmount,
-        address _bonusToken,
-        uint256 _bonusTokenAmount
-    ) external onlyOwner {
-        tokenAddresses[0] = _feeToken;
-        tokenAddresses[1] = _bonusToken;
-        tokenAmounts[0] = _feeTokenAmount;
-        tokenAmounts[1] = _bonusTokenAmount;
-        emit FeeTokenAndBonusTokenUpdated(
-            msg.sender,
-            _feeToken,
-            _feeTokenAmount,
-            _bonusToken,
-            _bonusTokenAmount
-        );
+    function updateBonusToken(address _bonusToken, uint256 _bonusAmount) external onlyOwner {
+        bonusToken = _bonusToken;
+        bonusAmount = _bonusAmount;
+        emit BonusTokenUpdated(msg.sender, _bonusToken, _bonusAmount);
     }
 
     /**
@@ -466,14 +449,6 @@ contract HeroArenaBattle is Ownable, AccessControl, ReentrancyGuard {
             require(received == amount, "Token not supported (fee-on-transfer)");
         }
         outstandingBets[token] += amount;
-    }
-
-    function _chargeFee(address from) internal {
-        uint256 feeAmount = tokenAmounts[0];
-        if (feeAmount == 0) return;
-        address feeToken = tokenAddresses[0];
-        require(feeToken != address(0), "FeeToken not configured");
-        IERC20(feeToken).safeTransferFrom(from, address(this), feeAmount);
     }
 
     function _payout(address token, address to, uint256 amount) internal {

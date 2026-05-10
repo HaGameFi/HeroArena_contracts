@@ -17,7 +17,6 @@ contract HeroArenaBattleTest is Test {
 
     MockERC20 hapToken;
     MockERC20 betToken;
-    MockERC20 feeToken;
     MockERC20 bonusToken;
 
     address ownerAddr;
@@ -28,7 +27,6 @@ contract HeroArenaBattleTest is Test {
     address stranger;
 
     uint256 constant BET_AMOUNT   = 1 ether;
-    uint256 constant FEE_AMOUNT   = 0.1 ether;
     uint256 constant BONUS_AMOUNT = 0.5 ether;
 
     bytes32 constant LIQUIDATOR_ROLE = keccak256("LIQUIDATOR_ROLE");
@@ -49,7 +47,6 @@ contract HeroArenaBattleTest is Test {
         vm.prank(user3); profileSC.createProfile(1);
 
         betToken   = new MockERC20();
-        feeToken   = new MockERC20();
         bonusToken = new MockERC20();
 
         battleSC = new HeroArenaBattle(HeroArenaProfileInterface(address(profileSC)));
@@ -57,8 +54,6 @@ contract HeroArenaBattleTest is Test {
 
         betToken.mint(user1, 10_000 ether);
         betToken.mint(user2, 10_000 ether);
-        feeToken.mint(user1, 10_000 ether);
-        feeToken.mint(user2, 10_000 ether);
         vm.deal(user1, 100 ether);
         vm.deal(user2, 100 ether);
         vm.deal(user3, 100 ether);
@@ -66,8 +61,6 @@ contract HeroArenaBattleTest is Test {
 
         vm.prank(user1); betToken.approve(address(battleSC), type(uint256).max);
         vm.prank(user2); betToken.approve(address(battleSC), type(uint256).max);
-        vm.prank(user1); feeToken.approve(address(battleSC), type(uint256).max);
-        vm.prank(user2); feeToken.approve(address(battleSC), type(uint256).max);
     }
 
     // ─── helpers ──────────────────────────────────────────────────────────────
@@ -173,33 +166,25 @@ contract HeroArenaBattleTest is Test {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // updateFeeAndBonusTokenAddressWithAmount
+    // updateBonusToken
     // ═══════════════════════════════════════════════════════════════════════════
 
-    function test_UpdateFeeAndBonus_SetsValues() public {
-        battleSC.updateFeeAndBonusTokenAddressWithAmount(
-            address(feeToken), FEE_AMOUNT, address(bonusToken), BONUS_AMOUNT
-        );
-        assertEq(battleSC.tokenAddresses(0), address(feeToken));
-        assertEq(battleSC.tokenAddresses(1), address(bonusToken));
-        assertEq(battleSC.tokenAmounts(0), FEE_AMOUNT);
-        assertEq(battleSC.tokenAmounts(1), BONUS_AMOUNT);
+    function test_UpdateBonusToken_SetsValues() public {
+        battleSC.updateBonusToken(address(bonusToken), BONUS_AMOUNT);
+        assertEq(battleSC.bonusToken(), address(bonusToken));
+        assertEq(battleSC.bonusAmount(), BONUS_AMOUNT);
     }
 
-    function test_UpdateFeeAndBonus_EmitsEvent() public {
+    function test_UpdateBonusToken_EmitsEvent() public {
         vm.expectEmit(true, false, false, true);
-        emit HeroArenaBattle.FeeTokenAndBonusTokenUpdated(
-            ownerAddr, address(feeToken), FEE_AMOUNT, address(bonusToken), BONUS_AMOUNT
-        );
-        battleSC.updateFeeAndBonusTokenAddressWithAmount(
-            address(feeToken), FEE_AMOUNT, address(bonusToken), BONUS_AMOUNT
-        );
+        emit HeroArenaBattle.BonusTokenUpdated(ownerAddr, address(bonusToken), BONUS_AMOUNT);
+        battleSC.updateBonusToken(address(bonusToken), BONUS_AMOUNT);
     }
 
-    function test_UpdateFeeAndBonus_RevertsIfNotOwner() public {
+    function test_UpdateBonusToken_RevertsIfNotOwner() public {
         vm.prank(stranger);
         vm.expectRevert();
-        battleSC.updateFeeAndBonusTokenAddressWithAmount(address(feeToken), 1, address(0), 0);
+        battleSC.updateBonusToken(address(bonusToken), BONUS_AMOUNT);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -361,22 +346,6 @@ contract HeroArenaBattleTest is Test {
         battleSC.createBattle(address(betToken), BET_AMOUNT, address(0));
     }
 
-    function test_CreateBattle_WithFee_CollectsFee() public {
-        _enableERC20();
-        battleSC.updateFeeAndBonusTokenAddressWithAmount(address(feeToken), FEE_AMOUNT, address(0), 0);
-        vm.prank(user1);
-        battleSC.createBattle(address(betToken), BET_AMOUNT, address(0));
-        assertEq(feeToken.balanceOf(address(battleSC)), FEE_AMOUNT);
-    }
-
-    function test_CreateBattle_WithFeeAmountButNoToken_Reverts() public {
-        _enableERC20();
-        battleSC.updateFeeAndBonusTokenAddressWithAmount(address(0), FEE_AMOUNT, address(0), 0);
-        vm.prank(user1);
-        vm.expectRevert("FeeToken not configured");
-        battleSC.createBattle(address(betToken), BET_AMOUNT, address(0));
-    }
-
     // ═══════════════════════════════════════════════════════════════════════════
     // joinExistBattle
     // ═══════════════════════════════════════════════════════════════════════════
@@ -422,15 +391,6 @@ contract HeroArenaBattleTest is Test {
         vm.prank(user2);
         battleSC.joinExistBattle{value: BET_AMOUNT}(id);
         assertTrue(battleSC.getBattleInfo(id).isStarted);
-    }
-
-    function test_JoinBattle_WithFee_CollectsFeeFromBothPlayers() public {
-        _enableERC20();
-        battleSC.updateFeeAndBonusTokenAddressWithAmount(address(feeToken), FEE_AMOUNT, address(0), 0);
-        vm.prank(user1); battleSC.createBattle(address(betToken), BET_AMOUNT, address(0));
-        uint256 id = battleSC.getBattleCount();
-        vm.prank(user2); battleSC.joinExistBattle(id);
-        assertEq(feeToken.balanceOf(address(battleSC)), FEE_AMOUNT * 2);
     }
 
     function test_JoinBattle_SucceedsAfterTokenRemovedFromWhitelist() public {
@@ -516,7 +476,7 @@ contract HeroArenaBattleTest is Test {
 
     function test_SettleBattle_WithBonus_PaysBonus() public {
         bonusToken.mint(address(battleSC), BONUS_AMOUNT);
-        battleSC.updateFeeAndBonusTokenAddressWithAmount(address(0), 0, address(bonusToken), BONUS_AMOUNT);
+        battleSC.updateBonusToken(address(bonusToken), BONUS_AMOUNT);
         uint256 id = _startERC20Battle();
         uint256 before = bonusToken.balanceOf(user2);
         vm.prank(liquidatorAddr);
@@ -1021,9 +981,7 @@ contract HeroArenaBattleTest is Test {
 
     function test_M1_SettleSucceedsEvenIfBonusPoolEmpty() public {
         // Configure a bonus the contract cannot pay (no deposit made).
-        battleSC.updateFeeAndBonusTokenAddressWithAmount(
-            address(0), 0, address(bonusToken), BONUS_AMOUNT
-        );
+        battleSC.updateBonusToken(address(bonusToken), BONUS_AMOUNT);
         uint256 id = _startNativeBattle();
 
         uint256 before = user1.balance;
@@ -1038,9 +996,7 @@ contract HeroArenaBattleTest is Test {
     }
 
     function test_M1_EmitsBonusPayoutWithSuccessFalse() public {
-        battleSC.updateFeeAndBonusTokenAddressWithAmount(
-            address(0), 0, address(bonusToken), BONUS_AMOUNT
-        );
+        battleSC.updateBonusToken(address(bonusToken), BONUS_AMOUNT);
         uint256 id = _startNativeBattle();
 
         vm.expectEmit(true, true, true, true);
@@ -1051,9 +1007,7 @@ contract HeroArenaBattleTest is Test {
 
     function test_M1_BonusPaidNormallyWhenPoolFunded() public {
         bonusToken.mint(address(battleSC), BONUS_AMOUNT);
-        battleSC.updateFeeAndBonusTokenAddressWithAmount(
-            address(0), 0, address(bonusToken), BONUS_AMOUNT
-        );
+        battleSC.updateBonusToken(address(bonusToken), BONUS_AMOUNT);
         uint256 id = _startNativeBattle();
 
         vm.expectEmit(true, true, true, true);

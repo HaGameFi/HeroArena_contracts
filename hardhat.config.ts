@@ -38,7 +38,7 @@ export default defineConfig({
       type: "http",
       chainType: "l1",
       url: configVariable("BSC_TESTNET_RPC_URL"),
-      accounts: [configVariable("BSC_PRIVATE_KEY")],
+      accounts: [configVariable("SEPOLIA_PRIVATE_KEY")],
     },
     // bscMainnet: {
     //   type: "http",
@@ -49,7 +49,7 @@ export default defineConfig({
   },
   verify: {
     etherscan: {
-      apiKey: configVariable("BSCSCAN_API_KEY"),
+      apiKey: "9PSZ4Y8K9NVFHRYS5HG7UA7VFGZNU5UCJV",//configVariable("BSCSCAN_API_KEY"),
     }
   }
 });
