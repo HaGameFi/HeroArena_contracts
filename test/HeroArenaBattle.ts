@@ -723,37 +723,321 @@ describe("HeroArenaBattle", async function () {
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // claimTokens
+  // setProtocolFee / setProtocolFeeRecipient
   // ═══════════════════════════════════════════════════════════════════════════
 
-  describe("claimTokens", async function () {
-    it("transfers ETH to destination", async function () {
-      const { battle } = await startNativeBattle();
-      const dest = stranger;
-      const before = await publicClient.getBalance({ address: dest });
-      await battle.write.claimTokens([dest, []]);
-      assert.equal(await publicClient.getBalance({ address: dest }), before + BET_AMOUNT * 2n);
-    });
-
-    it("transfers ERC20 to destination", async function () {
-      const { battle, betToken } = await startERC20Battle();
-      const dest = stranger;
-      await battle.write.claimTokens([dest, [betToken.address]]);
-      assert.equal(await betToken.read.balanceOf([dest]), BET_AMOUNT * 2n);
-    });
-
-    it("reverts if destination is zero address", async function () {
+  describe("setProtocolFee", async function () {
+    it("sets the value", async function () {
       const { battle } = await deploy();
+      await battle.write.setProtocolFee([300n]);
+      assert.equal(await battle.read.protocolFeeBps(), 300n);
+    });
+
+    it("allows zero (kill switch)", async function () {
+      const { battle } = await deploy();
+      await battle.write.setProtocolFee([300n]);
+      await battle.write.setProtocolFee([0n]);
+      assert.equal(await battle.read.protocolFeeBps(), 0n);
+    });
+
+    it("allows up to MAX_PROTOCOL_FEE_BPS", async function () {
+      const { battle } = await deploy();
+      const cap = await battle.read.MAX_PROTOCOL_FEE_BPS();
+      await battle.write.setProtocolFee([cap]);
+      assert.equal(await battle.read.protocolFeeBps(), cap);
+    });
+
+    it("reverts if exceeds cap", async function () {
+      const { battle } = await deploy();
+      const cap = await battle.read.MAX_PROTOCOL_FEE_BPS();
       await assert.rejects(
-        battle.write.claimTokens([zeroAddress, []]),
-        /Invalid address/,
+        battle.write.setProtocolFee([cap + 1n]),
+        /Fee exceeds cap/,
       );
     });
 
     it("reverts if not owner", async function () {
       const { battle } = await deploy();
       await assert.rejects(
-        battle.write.claimTokens([stranger, []], { account: strangerClient.account }),
+        battle.write.setProtocolFee([100n], { account: strangerClient.account }),
+        /OwnableUnauthorizedAccount/,
+      );
+    });
+  });
+
+  describe("setProtocolFeeRecipient", async function () {
+    it("sets the recipient", async function () {
+      const { battle } = await deploy();
+      await battle.write.setProtocolFeeRecipient([stranger]);
+      assert.equal(
+        (await battle.read.protocolFeeRecipient()).toLowerCase(),
+        stranger.toLowerCase(),
+      );
+    });
+
+    it("allows zero (switch to accumulate mode)", async function () {
+      const { battle } = await deploy();
+      await battle.write.setProtocolFeeRecipient([stranger]);
+      await battle.write.setProtocolFeeRecipient([zeroAddress]);
+      assert.equal(await battle.read.protocolFeeRecipient(), zeroAddress);
+    });
+
+    it("reverts if not owner", async function () {
+      const { battle } = await deploy();
+      await assert.rejects(
+        battle.write.setProtocolFeeRecipient([stranger], { account: strangerClient.account }),
+        /OwnableUnauthorizedAccount/,
+      );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // settleBattle — protocol fee
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("settleBattle (protocol fee)", async function () {
+    it("with fee=0 pays full reward and recipient gets nothing", async function () {
+      const { battle, battleId } = await startNativeBattle();
+      await battle.write.setProtocolFeeRecipient([stranger]);
+
+      const userBefore  = await publicClient.getBalance({ address: user1 });
+      const recipBefore = await publicClient.getBalance({ address: stranger });
+      await battle.write.settleBattle([battleId, user1], { account: liquidatorClient.account });
+
+      assert.equal(await publicClient.getBalance({ address: user1 }), userBefore + BET_AMOUNT * 2n);
+      assert.equal(await publicClient.getBalance({ address: stranger }), recipBefore);
+    });
+
+    it("pushes fee to recipient when set (push mode)", async function () {
+      const { battle, battleId } = await startNativeBattle();
+      await battle.write.setProtocolFeeRecipient([stranger]);
+      await battle.write.setProtocolFee([300n]); // 3 %
+      const expectedFee = (BET_AMOUNT * 2n * 300n) / 10000n;
+
+      const userBefore  = await publicClient.getBalance({ address: user1 });
+      const recipBefore = await publicClient.getBalance({ address: stranger });
+      await battle.write.settleBattle([battleId, user1], { account: liquidatorClient.account });
+
+      assert.equal(await publicClient.getBalance({ address: stranger }), recipBefore + expectedFee);
+      assert.equal(
+        await publicClient.getBalance({ address: user1 }),
+        userBefore + BET_AMOUNT * 2n - expectedFee,
+      );
+      assert.equal(await battle.read.accruedProtocolFees([zeroAddress]), 0n);
+    });
+
+    it("accrues fee to accumulator when recipient is zero (pull mode)", async function () {
+      const { battle, battleId } = await startNativeBattle();
+      await battle.write.setProtocolFee([300n]);
+      const expectedFee = (BET_AMOUNT * 2n * 300n) / 10000n;
+
+      const userBefore = await publicClient.getBalance({ address: user1 });
+      await battle.write.settleBattle([battleId, user1], { account: liquidatorClient.account });
+
+      assert.equal(await battle.read.accruedProtocolFees([zeroAddress]), expectedFee);
+      assert.equal(
+        await publicClient.getBalance({ address: user1 }),
+        userBefore + BET_AMOUNT * 2n - expectedFee,
+      );
+    });
+
+    it("accrues fee for ERC20 token", async function () {
+      const { battle, betToken, battleId } = await startERC20Battle();
+      await battle.write.setProtocolFee([500n]); // 5 %
+      const expectedFee = (BET_AMOUNT * 2n * 500n) / 10000n;
+
+      const userBefore = await betToken.read.balanceOf([user1]);
+      await battle.write.settleBattle([battleId, user1], { account: liquidatorClient.account });
+
+      assert.equal(await battle.read.accruedProtocolFees([betToken.address]), expectedFee);
+      assert.equal(
+        await betToken.read.balanceOf([user1]),
+        userBefore + BET_AMOUNT * 2n - expectedFee,
+      );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // withdrawProtocolFees
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("withdrawProtocolFees", async function () {
+    it("withdraws full accumulated ETH fee", async function () {
+      const { battle, battleId } = await startNativeBattle();
+      await battle.write.setProtocolFee([300n]);
+      await battle.write.settleBattle([battleId, user1], { account: liquidatorClient.account });
+
+      const accrued = await battle.read.accruedProtocolFees([zeroAddress]);
+      const before  = await publicClient.getBalance({ address: stranger });
+      await battle.write.withdrawProtocolFees([zeroAddress, stranger, accrued]);
+
+      assert.equal(await publicClient.getBalance({ address: stranger }), before + accrued);
+      assert.equal(await battle.read.accruedProtocolFees([zeroAddress]), 0n);
+    });
+
+    it("supports partial ERC20 withdraw", async function () {
+      const { battle, betToken, battleId } = await startERC20Battle();
+      await battle.write.setProtocolFee([300n]);
+      await battle.write.settleBattle([battleId, user1], { account: liquidatorClient.account });
+
+      const accrued = await battle.read.accruedProtocolFees([betToken.address]);
+      const half    = accrued / 2n;
+      await battle.write.withdrawProtocolFees([betToken.address, stranger, half]);
+
+      assert.equal(await betToken.read.balanceOf([stranger]), half);
+      assert.equal(await battle.read.accruedProtocolFees([betToken.address]), accrued - half);
+    });
+
+    it("reverts if amount exceeds accrued", async function () {
+      const { battle, battleId } = await startNativeBattle();
+      await battle.write.setProtocolFee([300n]);
+      await battle.write.settleBattle([battleId, user1], { account: liquidatorClient.account });
+      const accrued = await battle.read.accruedProtocolFees([zeroAddress]);
+
+      await assert.rejects(
+        battle.write.withdrawProtocolFees([zeroAddress, stranger, accrued + 1n]),
+        /Amount exceeds accrued fees/,
+      );
+    });
+
+    it("reverts if destination is zero", async function () {
+      const { battle } = await deploy();
+      await assert.rejects(
+        battle.write.withdrawProtocolFees([zeroAddress, zeroAddress, 1n]),
+        /Invalid address/,
+      );
+    });
+
+    it("reverts if amount is zero", async function () {
+      const { battle } = await deploy();
+      await assert.rejects(
+        battle.write.withdrawProtocolFees([zeroAddress, stranger, 0n]),
+        /Amount must be > 0/,
+      );
+    });
+
+    it("reverts if not owner", async function () {
+      const { battle } = await deploy();
+      await assert.rejects(
+        battle.write.withdrawProtocolFees(
+          [zeroAddress, stranger, 1n],
+          { account: strangerClient.account },
+        ),
+        /OwnableUnauthorizedAccount/,
+      );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // outstandingBets accounting
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("outstandingBets", async function () {
+    it("increments on createBattle", async function () {
+      const { battle } = await deployWithNative();
+      assert.equal(await battle.read.outstandingBets([zeroAddress]), 0n);
+      await battle.write.createBattle(
+        [zeroAddress, BET_AMOUNT, zeroAddress],
+        { account: user1Client.account, value: BET_AMOUNT },
+      );
+      assert.equal(await battle.read.outstandingBets([zeroAddress]), BET_AMOUNT);
+    });
+
+    it("increments on join (total = 2 × bet)", async function () {
+      const { battle, battleId } = await createNativeOpenBattle();
+      await battle.write.joinExistBattle([battleId], { account: user2Client.account, value: BET_AMOUNT });
+      assert.equal(await battle.read.outstandingBets([zeroAddress]), BET_AMOUNT * 2n);
+    });
+
+    it("returns to zero after settle", async function () {
+      const { battle, battleId } = await startNativeBattle();
+      assert.equal(await battle.read.outstandingBets([zeroAddress]), BET_AMOUNT * 2n);
+      await battle.write.settleBattle([battleId, user1], { account: liquidatorClient.account });
+      assert.equal(await battle.read.outstandingBets([zeroAddress]), 0n);
+    });
+
+    it("returns to zero after close", async function () {
+      const { battle, battleId } = await createNativeOpenBattle();
+      assert.equal(await battle.read.outstandingBets([zeroAddress]), BET_AMOUNT);
+      await battle.write.closeBattle([battleId], { account: liquidatorClient.account });
+      assert.equal(await battle.read.outstandingBets([zeroAddress]), 0n);
+    });
+
+    it("tracks ERC20 bets separately from ETH bets", async function () {
+      const { battle, betToken } = await startERC20Battle();
+      assert.equal(await battle.read.outstandingBets([betToken.address]), BET_AMOUNT * 2n);
+      assert.equal(await battle.read.outstandingBets([zeroAddress]), 0n);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // rescueExtraTokens
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("rescueExtraTokens", async function () {
+    it("rescues unused tokens previously deposited via depositToken", async function () {
+      const { battle, bonusToken } = await deploy();
+      await bonusToken.write.mint([owner, parseEther("1000")]);
+      await bonusToken.write.approve([battle.address, maxUint256]);
+      await battle.write.depositToken([bonusToken.address, parseEther("1000")]);
+
+      await battle.write.rescueExtraTokens([bonusToken.address, stranger, parseEther("1000")]);
+      assert.equal(await bonusToken.read.balanceOf([stranger]), parseEther("1000"));
+    });
+
+    it("cannot drain locked battle bets", async function () {
+      const { battle } = await startNativeBattle();
+      await assert.rejects(
+        battle.write.rescueExtraTokens([zeroAddress, stranger, 1n]),
+        /Amount exceeds rescuable balance/,
+      );
+    });
+
+    it("cannot drain accrued protocol fees", async function () {
+      const { battle, battleId } = await startNativeBattle();
+      await battle.write.setProtocolFee([300n]);
+      await battle.write.settleBattle([battleId, user1], { account: liquidatorClient.account });
+
+      // After settle, contract balance equals accruedFees exactly — nothing rescuable
+      const fees = await battle.read.accruedProtocolFees([zeroAddress]);
+      assert.equal(await publicClient.getBalance({ address: battle.address }), fees);
+
+      await assert.rejects(
+        battle.write.rescueExtraTokens([zeroAddress, stranger, 1n]),
+        /Amount exceeds rescuable balance/,
+      );
+    });
+
+    it("rescues ERC20 sent directly to the contract", async function () {
+      const { battle, bonusToken } = await deploy();
+      await bonusToken.write.mint([battle.address, parseEther("100")]);
+      await battle.write.rescueExtraTokens([bonusToken.address, stranger, parseEther("100")]);
+      assert.equal(await bonusToken.read.balanceOf([stranger]), parseEther("100"));
+    });
+
+    it("reverts if destination is zero", async function () {
+      const { battle } = await deploy();
+      await assert.rejects(
+        battle.write.rescueExtraTokens([zeroAddress, zeroAddress, 1n]),
+        /Invalid address/,
+      );
+    });
+
+    it("reverts if amount is zero", async function () {
+      const { battle } = await deploy();
+      await assert.rejects(
+        battle.write.rescueExtraTokens([zeroAddress, stranger, 0n]),
+        /Amount must be > 0/,
+      );
+    });
+
+    it("reverts if not owner", async function () {
+      const { battle } = await deploy();
+      await assert.rejects(
+        battle.write.rescueExtraTokens(
+          [zeroAddress, stranger, 1n],
+          { account: strangerClient.account },
+        ),
         /OwnableUnauthorizedAccount/,
       );
     });
@@ -790,6 +1074,131 @@ describe("HeroArenaBattle", async function () {
       assert.equal(info.selfAddress, zeroAddress);
       assert.equal(info.isStarted, false);
       assert.equal(info.isEnded, false);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // M-1 — bonus failure must NOT block settlement
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("M-1: bonus failure handling", async function () {
+    it("settle succeeds even if bonus pool is empty", async function () {
+      const { battle, bonusToken, battleId } = await startNativeBattle();
+      // Configure a bonus the contract cannot pay (no deposit)
+      await battle.write.updateFeeAndBonusTokenAddressWithAmount([
+        zeroAddress, 0n, bonusToken.address, BONUS_AMOUNT,
+      ]);
+
+      const before = await publicClient.getBalance({ address: user1 });
+      await battle.write.settleBattle([battleId, user1], { account: liquidatorClient.account });
+
+      // Winner still got the main reward
+      assert.equal(await publicClient.getBalance({ address: user1 }), before + BET_AMOUNT * 2n);
+      assert.equal((await battle.read.getBattleInfo([battleId])).isEnded, true);
+      // Bonus was skipped
+      assert.equal(await bonusToken.read.balanceOf([user1]), 0n);
+    });
+
+    it("bonus paid normally when pool is funded", async function () {
+      const { battle, bonusToken, battleId } = await startNativeBattle();
+      await bonusToken.write.mint([battle.address, BONUS_AMOUNT]);
+      await battle.write.updateFeeAndBonusTokenAddressWithAmount([
+        zeroAddress, 0n, bonusToken.address, BONUS_AMOUNT,
+      ]);
+
+      await battle.write.settleBattle([battleId, user1], { account: liquidatorClient.account });
+      assert.equal(await bonusToken.read.balanceOf([user1]), BONUS_AMOUNT);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // M-2 — fee push failure must NOT block settlement (falls back to accrual)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("M-2: fee push fallback to accrual", async function () {
+    it("falls back to accrual when recipient is a reverting contract", async function () {
+      const { battle, battleId } = await startNativeBattle();
+      const bad = await viem.deployContract("MockRevertingReceiver");
+      await battle.write.setProtocolFeeRecipient([bad.address]);
+      await battle.write.setProtocolFee([300n]);
+      const expectedFee = (BET_AMOUNT * 2n * 300n) / 10000n;
+
+      const userBefore = await publicClient.getBalance({ address: user1 });
+      // MUST NOT revert
+      await battle.write.settleBattle([battleId, user1], { account: liquidatorClient.account });
+
+      // Winner got their net reward
+      assert.equal(
+        await publicClient.getBalance({ address: user1 }),
+        userBefore + BET_AMOUNT * 2n - expectedFee,
+      );
+      // Bad recipient got nothing
+      assert.equal(await publicClient.getBalance({ address: bad.address }), 0n);
+      // Fee was accrued — protocol still gets paid, just deferred
+      assert.equal(await battle.read.accruedProtocolFees([zeroAddress]), expectedFee);
+    });
+
+    it("admin can withdraw the fallback-accrued fee", async function () {
+      const { battle, battleId } = await startNativeBattle();
+      const bad = await viem.deployContract("MockRevertingReceiver");
+      await battle.write.setProtocolFeeRecipient([bad.address]);
+      await battle.write.setProtocolFee([300n]);
+
+      await battle.write.settleBattle([battleId, user1], { account: liquidatorClient.account });
+      const accrued = await battle.read.accruedProtocolFees([zeroAddress]);
+      const before  = await publicClient.getBalance({ address: stranger });
+
+      await battle.write.withdrawProtocolFees([zeroAddress, stranger, accrued]);
+      assert.equal(await publicClient.getBalance({ address: stranger }), before + accrued);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // M-3 — fee-on-transfer tokens must be rejected at receive time
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("M-3: fee-on-transfer token rejection", async function () {
+    async function deployWithFoT() {
+      const d = await deploy();
+      const fot = await viem.deployContract("MockFeeOnTransferERC20");
+      await fot.write.mint([user1, parseEther("10000")]);
+      await fot.write.approve([d.battle.address, maxUint256], { account: user1Client.account });
+      await d.battle.write.updateAvailableCreateBattle([true]);
+      await d.battle.write.updateAllowedBetToken([fot.address, true]);
+      await d.battle.write.updateMinimumBetTokenAmount([0n, 1n]);
+      return { ...d, fot };
+    }
+
+    it("rejects createBattle when bet token is fee-on-transfer", async function () {
+      const { battle, fot } = await deployWithFoT();
+      await assert.rejects(
+        battle.write.createBattle(
+          [fot.address, BET_AMOUNT, zeroAddress],
+          { account: user1Client.account },
+        ),
+        /Token not supported \(fee-on-transfer\)/,
+      );
+    });
+
+    it("failed bet leaves no state change (player keeps their tokens)", async function () {
+      const { battle, fot } = await deployWithFoT();
+
+      const userBefore     = await fot.read.balanceOf([user1]);
+      const contractBefore = await fot.read.balanceOf([battle.address]);
+      const outstandBefore = await battle.read.outstandingBets([fot.address]);
+      const countBefore    = await battle.read.getBattleCount();
+
+      await assert.rejects(
+        battle.write.createBattle(
+          [fot.address, BET_AMOUNT, zeroAddress],
+          { account: user1Client.account },
+        ),
+      );
+
+      assert.equal(await fot.read.balanceOf([user1]), userBefore);
+      assert.equal(await fot.read.balanceOf([battle.address]), contractBefore);
+      assert.equal(await battle.read.outstandingBets([fot.address]), outstandBefore);
+      assert.equal(await battle.read.getBattleCount(), countBefore);
     });
   });
 });

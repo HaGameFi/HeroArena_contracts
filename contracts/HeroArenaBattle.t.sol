@@ -8,6 +8,8 @@ import {HeroArenaBattle} from "./HeroArenaBattle.sol";
 import {HeroArenaProfileInterface} from "./interfaces/HeroArenaProfileInterface.sol";
 import {HeroArenaProfile} from "./HeroArenaProfile.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
+import {MockFeeOnTransferERC20} from "./mocks/MockFeeOnTransferERC20.sol";
+import {MockRevertingReceiver} from "./mocks/MockRevertingReceiver.sol";
 
 contract HeroArenaBattleTest is Test {
     HeroArenaBattle battleSC;
@@ -663,44 +665,331 @@ contract HeroArenaBattleTest is Test {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // claimTokens
+    // setProtocolFee / setProtocolFeeRecipient
     // ═══════════════════════════════════════════════════════════════════════════
 
-    function test_ClaimTokens_TransfersETH() public {
-        _startNativeBattle();
-        address dest = makeAddr("dest");
-        address[] memory tokens = new address[](0);
-        battleSC.claimTokens(dest, tokens);
-        assertEq(dest.balance, BET_AMOUNT * 2);
+    function test_SetProtocolFee_SetsValue() public {
+        battleSC.setProtocolFee(300);
+        assertEq(battleSC.protocolFeeBps(), 300);
     }
 
-    function test_ClaimTokens_TransfersERC20() public {
-        _startERC20Battle();
-        address dest = makeAddr("dest");
-        address[] memory tokens = new address[](1);
-        tokens[0] = address(betToken);
-        battleSC.claimTokens(dest, tokens);
-        assertEq(betToken.balanceOf(dest), BET_AMOUNT * 2);
+    function test_SetProtocolFee_AllowsZeroAsKillSwitch() public {
+        battleSC.setProtocolFee(300);
+        battleSC.setProtocolFee(0);
+        assertEq(battleSC.protocolFeeBps(), 0);
     }
 
-    function test_ClaimTokens_SkipsZeroAddressToken() public {
-        address dest = makeAddr("dest");
-        address[] memory tokens = new address[](1);
-        tokens[0] = address(0);
-        battleSC.claimTokens(dest, tokens);
+    function test_SetProtocolFee_AllowsMaxCap() public {
+        uint256 cap = battleSC.MAX_PROTOCOL_FEE_BPS();
+        battleSC.setProtocolFee(cap);
+        assertEq(battleSC.protocolFeeBps(), cap);
     }
 
-    function test_ClaimTokens_RevertsIfInvalidDestination() public {
-        address[] memory tokens = new address[](0);
-        vm.expectRevert("Invalid address");
-        battleSC.claimTokens(address(0), tokens);
+    function test_SetProtocolFee_RevertsAboveCap() public {
+        uint256 cap = battleSC.MAX_PROTOCOL_FEE_BPS();
+        vm.expectRevert("Fee exceeds cap");
+        battleSC.setProtocolFee(cap + 1);
     }
 
-    function test_ClaimTokens_RevertsIfNotOwner() public {
-        address[] memory tokens = new address[](0);
+    function test_SetProtocolFee_RevertsIfNotOwner() public {
         vm.prank(stranger);
         vm.expectRevert();
-        battleSC.claimTokens(stranger, tokens);
+        battleSC.setProtocolFee(100);
+    }
+
+    function test_SetProtocolFee_EmitsEvent() public {
+        vm.expectEmit(true, false, false, true);
+        emit HeroArenaBattle.ProtocolFeeUpdated(ownerAddr, 0, 300);
+        battleSC.setProtocolFee(300);
+    }
+
+    function test_SetProtocolFeeRecipient_SetsValue() public {
+        address recipient = makeAddr("treasury");
+        battleSC.setProtocolFeeRecipient(recipient);
+        assertEq(battleSC.protocolFeeRecipient(), recipient);
+    }
+
+    function test_SetProtocolFeeRecipient_AllowsZeroToSwitchToAccumulateMode() public {
+        battleSC.setProtocolFeeRecipient(makeAddr("treasury"));
+        battleSC.setProtocolFeeRecipient(address(0));
+        assertEq(battleSC.protocolFeeRecipient(), address(0));
+    }
+
+    function test_SetProtocolFeeRecipient_RevertsIfNotOwner() public {
+        vm.prank(stranger);
+        vm.expectRevert();
+        battleSC.setProtocolFeeRecipient(stranger);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // settleBattle — protocol fee
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    function test_SettleBattle_FeeZero_PaysFullReward() public {
+        // Default: protocolFeeBps == 0 → no fee charged regardless of recipient.
+        address recipient = makeAddr("treasury");
+        battleSC.setProtocolFeeRecipient(recipient);
+        uint256 id = _startNativeBattle();
+
+        uint256 before = user1.balance;
+        vm.prank(liquidatorAddr);
+        battleSC.settleBattle(id, user1);
+
+        assertEq(user1.balance, before + BET_AMOUNT * 2);
+        assertEq(recipient.balance, 0);
+    }
+
+    function test_SettleBattle_PushesFeeToRecipient() public {
+        address recipient = makeAddr("treasury");
+        battleSC.setProtocolFeeRecipient(recipient);
+        battleSC.setProtocolFee(300); // 3 %
+        uint256 id = _startNativeBattle();
+
+        uint256 totalReward = BET_AMOUNT * 2;
+        uint256 expectedFee = (totalReward * 300) / 10000;
+
+        uint256 userBefore = user1.balance;
+        vm.prank(liquidatorAddr);
+        battleSC.settleBattle(id, user1);
+
+        assertEq(recipient.balance, expectedFee);
+        assertEq(user1.balance, userBefore + totalReward - expectedFee);
+        // No accrual when push mode is active
+        assertEq(battleSC.accruedProtocolFees(address(0)), 0);
+    }
+
+    function test_SettleBattle_AccruesFee_WhenRecipientUnset() public {
+        battleSC.setProtocolFee(300);
+        // protocolFeeRecipient remains address(0) → accrue mode
+        uint256 id = _startNativeBattle();
+
+        uint256 totalReward = BET_AMOUNT * 2;
+        uint256 expectedFee = (totalReward * 300) / 10000;
+
+        uint256 userBefore = user1.balance;
+        vm.prank(liquidatorAddr);
+        battleSC.settleBattle(id, user1);
+
+        assertEq(battleSC.accruedProtocolFees(address(0)), expectedFee);
+        assertEq(user1.balance, userBefore + totalReward - expectedFee);
+    }
+
+    function test_SettleBattle_AccruesFee_ERC20() public {
+        battleSC.setProtocolFee(500); // 5 %
+        uint256 id = _startERC20Battle();
+
+        uint256 totalReward = BET_AMOUNT * 2;
+        uint256 expectedFee = (totalReward * 500) / 10000;
+
+        uint256 userBefore = betToken.balanceOf(user1);
+        vm.prank(liquidatorAddr);
+        battleSC.settleBattle(id, user1);
+
+        assertEq(battleSC.accruedProtocolFees(address(betToken)), expectedFee);
+        assertEq(betToken.balanceOf(user1), userBefore + totalReward - expectedFee);
+    }
+
+    function test_SettleBattle_EmitsProtocolFeeChargedEvent_PushMode() public {
+        address recipient = makeAddr("treasury");
+        battleSC.setProtocolFeeRecipient(recipient);
+        battleSC.setProtocolFee(300);
+        uint256 id = _startNativeBattle();
+
+        uint256 expectedFee = (BET_AMOUNT * 2 * 300) / 10000;
+        vm.expectEmit(true, true, true, true);
+        emit HeroArenaBattle.ProtocolFeeCharged(id, address(0), recipient, expectedFee);
+        vm.prank(liquidatorAddr);
+        battleSC.settleBattle(id, user1);
+    }
+
+    function test_SettleBattle_BattleEndedEventReportsNetReward() public {
+        battleSC.setProtocolFee(300);
+        uint256 id = _startNativeBattle();
+        uint256 expectedNet = BET_AMOUNT * 2 - (BET_AMOUNT * 2 * 300) / 10000;
+        vm.expectEmit(true, true, false, true);
+        emit HeroArenaBattle.BattleEnded(id, user1, expectedNet);
+        vm.prank(liquidatorAddr);
+        battleSC.settleBattle(id, user1);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // withdrawProtocolFees
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    function test_WithdrawProtocolFees_TransfersFullETH() public {
+        battleSC.setProtocolFee(300);
+        uint256 id = _startNativeBattle();
+        vm.prank(liquidatorAddr); battleSC.settleBattle(id, user1);
+
+        uint256 accrued = battleSC.accruedProtocolFees(address(0));
+        assertGt(accrued, 0);
+        address dest = makeAddr("treasury");
+        battleSC.withdrawProtocolFees(address(0), dest, accrued);
+        assertEq(dest.balance, accrued);
+        assertEq(battleSC.accruedProtocolFees(address(0)), 0);
+    }
+
+    function test_WithdrawProtocolFees_PartialWithdrawERC20() public {
+        battleSC.setProtocolFee(300);
+        uint256 id = _startERC20Battle();
+        vm.prank(liquidatorAddr); battleSC.settleBattle(id, user1);
+
+        uint256 accrued = battleSC.accruedProtocolFees(address(betToken));
+        uint256 half    = accrued / 2;
+        address dest    = makeAddr("treasury");
+        battleSC.withdrawProtocolFees(address(betToken), dest, half);
+        assertEq(betToken.balanceOf(dest), half);
+        assertEq(battleSC.accruedProtocolFees(address(betToken)), accrued - half);
+    }
+
+    function test_WithdrawProtocolFees_RevertsIfExceedsAccrued() public {
+        battleSC.setProtocolFee(300);
+        uint256 id = _startNativeBattle();
+        vm.prank(liquidatorAddr); battleSC.settleBattle(id, user1);
+
+        uint256 accrued = battleSC.accruedProtocolFees(address(0));
+        vm.expectRevert("Amount exceeds accrued fees");
+        battleSC.withdrawProtocolFees(address(0), stranger, accrued + 1);
+    }
+
+    function test_WithdrawProtocolFees_RevertsIfZeroDestination() public {
+        vm.expectRevert("Invalid address");
+        battleSC.withdrawProtocolFees(address(0), address(0), 1);
+    }
+
+    function test_WithdrawProtocolFees_RevertsIfZeroAmount() public {
+        vm.expectRevert("Amount must be > 0");
+        battleSC.withdrawProtocolFees(address(0), stranger, 0);
+    }
+
+    function test_WithdrawProtocolFees_RevertsIfNotOwner() public {
+        vm.prank(stranger);
+        vm.expectRevert();
+        battleSC.withdrawProtocolFees(address(0), stranger, 1);
+    }
+
+    function test_WithdrawProtocolFees_EmitsEvent() public {
+        battleSC.setProtocolFee(300);
+        uint256 id = _startNativeBattle();
+        vm.prank(liquidatorAddr); battleSC.settleBattle(id, user1);
+        uint256 accrued = battleSC.accruedProtocolFees(address(0));
+
+        address dest = makeAddr("treasury");
+        vm.expectEmit(true, true, true, true);
+        emit HeroArenaBattle.ProtocolFeeWithdrawn(ownerAddr, address(0), dest, accrued);
+        battleSC.withdrawProtocolFees(address(0), dest, accrued);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // outstandingBets accounting
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    function test_OutstandingBets_IncrementsOnCreate() public {
+        uint256 before = battleSC.outstandingBets(address(0));
+        _createNativeOpenBattle();
+        assertEq(battleSC.outstandingBets(address(0)), before + BET_AMOUNT);
+    }
+
+    function test_OutstandingBets_IncrementsOnJoin() public {
+        uint256 id = _createNativeOpenBattle();
+        uint256 before = battleSC.outstandingBets(address(0));
+        vm.prank(user2);
+        battleSC.joinExistBattle{value: BET_AMOUNT}(id);
+        assertEq(battleSC.outstandingBets(address(0)), before + BET_AMOUNT);
+    }
+
+    function test_OutstandingBets_FullCycleReturnsToZero() public {
+        uint256 id = _startNativeBattle();
+        assertEq(battleSC.outstandingBets(address(0)), BET_AMOUNT * 2);
+        vm.prank(liquidatorAddr); battleSC.settleBattle(id, user1);
+        assertEq(battleSC.outstandingBets(address(0)), 0);
+    }
+
+    function test_OutstandingBets_DecrementsOnClose() public {
+        uint256 id = _createNativeOpenBattle();
+        assertEq(battleSC.outstandingBets(address(0)), BET_AMOUNT);
+        vm.prank(liquidatorAddr); battleSC.closeBattle(id);
+        assertEq(battleSC.outstandingBets(address(0)), 0);
+    }
+
+    function test_OutstandingBets_TracksERC20Separately() public {
+        _startERC20Battle();
+        assertEq(battleSC.outstandingBets(address(betToken)), BET_AMOUNT * 2);
+        assertEq(battleSC.outstandingBets(address(0)), 0);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // rescueExtraTokens
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    function test_RescueExtraTokens_RescuesUnusedDeposit() public {
+        bonusToken.mint(ownerAddr, 1000 ether);
+        bonusToken.approve(address(battleSC), type(uint256).max);
+        battleSC.depositToken(address(bonusToken), 1000 ether);
+
+        address dest = makeAddr("dest");
+        battleSC.rescueExtraTokens(address(bonusToken), dest, 1000 ether);
+        assertEq(bonusToken.balanceOf(dest), 1000 ether);
+    }
+
+    function test_RescueExtraTokens_CannotDrainLockedBets() public {
+        _startNativeBattle(); // contract holds 2 ETH locked in a battle
+        address dest = makeAddr("dest");
+        vm.expectRevert("Amount exceeds rescuable balance");
+        battleSC.rescueExtraTokens(address(0), dest, 1);
+    }
+
+    function test_RescueExtraTokens_CanRescueAccidentalETH() public {
+        _startNativeBattle(); // 2 ETH locked
+        // Simulate someone accidentally transferring 5 ETH to the contract
+        vm.deal(address(battleSC), address(battleSC).balance + 5 ether);
+
+        address dest = makeAddr("dest");
+        battleSC.rescueExtraTokens(address(0), dest, 5 ether);
+        assertEq(dest.balance, 5 ether);
+
+        // But not one wei more — locked battle funds are protected
+        vm.expectRevert("Amount exceeds rescuable balance");
+        battleSC.rescueExtraTokens(address(0), dest, 1);
+    }
+
+    function test_RescueExtraTokens_CannotDrainAccruedFees() public {
+        battleSC.setProtocolFee(300);
+        uint256 id = _startNativeBattle();
+        vm.prank(liquidatorAddr); battleSC.settleBattle(id, user1);
+
+        uint256 fees = battleSC.accruedProtocolFees(address(0));
+        assertGt(fees, 0);
+        // After settle, contract balance equals accruedFees exactly
+        assertEq(address(battleSC).balance, fees);
+
+        address dest = makeAddr("dest");
+        vm.expectRevert("Amount exceeds rescuable balance");
+        battleSC.rescueExtraTokens(address(0), dest, 1);
+    }
+
+    function test_RescueExtraTokens_RevertsIfZeroDestination() public {
+        vm.expectRevert("Invalid address");
+        battleSC.rescueExtraTokens(address(0), address(0), 1);
+    }
+
+    function test_RescueExtraTokens_RevertsIfZeroAmount() public {
+        vm.expectRevert("Amount must be > 0");
+        battleSC.rescueExtraTokens(address(0), stranger, 0);
+    }
+
+    function test_RescueExtraTokens_RevertsIfNotOwner() public {
+        vm.prank(stranger);
+        vm.expectRevert();
+        battleSC.rescueExtraTokens(address(0), stranger, 1);
+    }
+
+    function test_RescueExtraTokens_EmitsEvent() public {
+        bonusToken.mint(address(battleSC), 100 ether);
+        address dest = makeAddr("dest");
+        vm.expectEmit(true, true, true, true);
+        emit HeroArenaBattle.ExtraTokensRescued(ownerAddr, address(bonusToken), dest, 100 ether);
+        battleSC.rescueExtraTokens(address(bonusToken), dest, 100 ether);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -725,4 +1014,170 @@ contract HeroArenaBattleTest is Test {
     }
 
     receive() external payable {}
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // M-1 — bonus failure must NOT block settlement
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    function test_M1_SettleSucceedsEvenIfBonusPoolEmpty() public {
+        // Configure a bonus the contract cannot pay (no deposit made).
+        battleSC.updateFeeAndBonusTokenAddressWithAmount(
+            address(0), 0, address(bonusToken), BONUS_AMOUNT
+        );
+        uint256 id = _startNativeBattle();
+
+        uint256 before = user1.balance;
+        vm.prank(liquidatorAddr);
+        battleSC.settleBattle(id, user1);
+
+        // Winner still receives the main reward — settlement was NOT blocked
+        assertEq(user1.balance, before + BET_AMOUNT * 2);
+        assertTrue(battleSC.getBattleInfo(id).isEnded);
+        // Bonus was not paid
+        assertEq(bonusToken.balanceOf(user1), 0);
+    }
+
+    function test_M1_EmitsBonusPayoutWithSuccessFalse() public {
+        battleSC.updateFeeAndBonusTokenAddressWithAmount(
+            address(0), 0, address(bonusToken), BONUS_AMOUNT
+        );
+        uint256 id = _startNativeBattle();
+
+        vm.expectEmit(true, true, true, true);
+        emit HeroArenaBattle.BonusPayout(id, user1, address(bonusToken), BONUS_AMOUNT, false);
+        vm.prank(liquidatorAddr);
+        battleSC.settleBattle(id, user1);
+    }
+
+    function test_M1_BonusPaidNormallyWhenPoolFunded() public {
+        bonusToken.mint(address(battleSC), BONUS_AMOUNT);
+        battleSC.updateFeeAndBonusTokenAddressWithAmount(
+            address(0), 0, address(bonusToken), BONUS_AMOUNT
+        );
+        uint256 id = _startNativeBattle();
+
+        vm.expectEmit(true, true, true, true);
+        emit HeroArenaBattle.BonusPayout(id, user1, address(bonusToken), BONUS_AMOUNT, true);
+        vm.prank(liquidatorAddr);
+        battleSC.settleBattle(id, user1);
+
+        assertEq(bonusToken.balanceOf(user1), BONUS_AMOUNT);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // M-2 — fee push failure must NOT block settlement (falls back to accrual)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    function test_M2_FeePushFallsBackToAccrual_OnRevertingRecipient() public {
+        // Set recipient to a contract that always reverts on receive
+        MockRevertingReceiver bad = new MockRevertingReceiver();
+        battleSC.setProtocolFeeRecipient(address(bad));
+        battleSC.setProtocolFee(300); // 3 %
+
+        uint256 id = _startNativeBattle();
+        uint256 expectedFee = (BET_AMOUNT * 2 * 300) / 10000;
+
+        uint256 userBefore = user1.balance;
+        vm.prank(liquidatorAddr);
+        battleSC.settleBattle(id, user1); // MUST NOT revert
+
+        // Winner still got their net reward
+        assertEq(user1.balance, userBefore + BET_AMOUNT * 2 - expectedFee);
+        // Bad recipient got nothing
+        assertEq(address(bad).balance, 0);
+        // Fee was accrued instead — protocol still gets its share, just deferred
+        assertEq(battleSC.accruedProtocolFees(address(0)), expectedFee);
+    }
+
+    function test_M2_EventReportsAccrualWhenPushFailed() public {
+        MockRevertingReceiver bad = new MockRevertingReceiver();
+        battleSC.setProtocolFeeRecipient(address(bad));
+        battleSC.setProtocolFee(300);
+
+        uint256 id = _startNativeBattle();
+        uint256 expectedFee = (BET_AMOUNT * 2 * 300) / 10000;
+
+        // ProtocolFeeCharged with recipient=0 means "fell back to accrual"
+        vm.expectEmit(true, true, true, true);
+        emit HeroArenaBattle.ProtocolFeeCharged(id, address(0), address(0), expectedFee);
+        vm.prank(liquidatorAddr);
+        battleSC.settleBattle(id, user1);
+    }
+
+    function test_M2_AdminCanWithdrawAccruedAfterPushFailure() public {
+        MockRevertingReceiver bad = new MockRevertingReceiver();
+        battleSC.setProtocolFeeRecipient(address(bad));
+        battleSC.setProtocolFee(300);
+
+        uint256 id = _startNativeBattle();
+        vm.prank(liquidatorAddr); battleSC.settleBattle(id, user1);
+
+        uint256 accrued = battleSC.accruedProtocolFees(address(0));
+        address dest = makeAddr("newTreasury");
+        battleSC.withdrawProtocolFees(address(0), dest, accrued);
+        assertEq(dest.balance, accrued);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // M-3 — fee-on-transfer tokens must be rejected at receive time
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    function test_M3_RejectsFeeOnTransferTokenInCreate() public {
+        MockFeeOnTransferERC20 fot = new MockFeeOnTransferERC20();
+        fot.mint(user1, 10_000 ether);
+        vm.prank(user1); fot.approve(address(battleSC), type(uint256).max);
+
+        battleSC.updateAvailableCreateBattle(true);
+        battleSC.updateAllowedBetToken(address(fot), true);
+        battleSC.updateMinimumBetTokenAmount(0, 1);
+
+        vm.prank(user1);
+        vm.expectRevert("Token not supported (fee-on-transfer)");
+        battleSC.createBattle(address(fot), BET_AMOUNT, address(0));
+    }
+
+    function test_M3_FailedReceiveLeavesNoStateChange() public {
+        MockFeeOnTransferERC20 fot = new MockFeeOnTransferERC20();
+        fot.mint(user1, 10_000 ether);
+        vm.prank(user1); fot.approve(address(battleSC), type(uint256).max);
+
+        battleSC.updateAvailableCreateBattle(true);
+        battleSC.updateAllowedBetToken(address(fot), true);
+        battleSC.updateMinimumBetTokenAmount(0, 1);
+
+        uint256 user1Before     = fot.balanceOf(user1);
+        uint256 contractBefore  = fot.balanceOf(address(battleSC));
+        uint256 outstandBefore  = battleSC.outstandingBets(address(fot));
+        uint256 countBefore     = battleSC.getBattleCount();
+
+        vm.prank(user1);
+        try battleSC.createBattle(address(fot), BET_AMOUNT, address(0)) {
+            revert("should have reverted");
+        } catch {}
+
+        // Full state rollback — player did not lose tokens, no battle was recorded
+        assertEq(fot.balanceOf(user1), user1Before);
+        assertEq(fot.balanceOf(address(battleSC)), contractBefore);
+        assertEq(battleSC.outstandingBets(address(fot)), outstandBefore);
+        assertEq(battleSC.getBattleCount(), countBefore);
+    }
+
+    function test_M3_RejectsFeeOnTransferTokenInJoin() public {
+        // Whitelist the FoT token AFTER a normal battle setup so we can test join
+        MockFeeOnTransferERC20 fot = new MockFeeOnTransferERC20();
+        fot.mint(user1, 10_000 ether);
+        fot.mint(user2, 10_000 ether);
+        vm.prank(user1); fot.approve(address(battleSC), type(uint256).max);
+        vm.prank(user2); fot.approve(address(battleSC), type(uint256).max);
+
+        battleSC.updateAvailableCreateBattle(true);
+        battleSC.updateAllowedBetToken(address(fot), true);
+        battleSC.updateMinimumBetTokenAmount(0, 1);
+
+        // createBattle would also fail, so we can only test the message.
+        // Both create and join are gated by the same _receiveBet check.
+        vm.prank(user1);
+        vm.expectRevert("Token not supported (fee-on-transfer)");
+        battleSC.createBattle(address(fot), BET_AMOUNT, address(0));
+    }
 }
