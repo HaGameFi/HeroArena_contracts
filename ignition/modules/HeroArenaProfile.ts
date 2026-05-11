@@ -7,6 +7,8 @@ export default buildModule("HeroArenaProfileModule", (m) => {
 //   m.call(profile, "grantRole", ["0x110b44e4bccdedbab0625f137765abddea8ae658791a82fff3fb5e80db2bad48", "0xdB581a164eF1148E851d18E04c37104E045041c3"]);
 //   m.call(profile, "grantRole", ["0x3f12a51c1a5d4235e47a0365ddc220be1678ccffcdf71bfd6ee9c417f801e008", "0x49975b88ff9594d430c271F25F75462785Bd9fAE"]);
 
+// add avatar address
+// create 4 teams
 
   return { profile };
 });

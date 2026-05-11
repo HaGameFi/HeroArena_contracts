@@ -32,7 +32,7 @@
 0xdB581a164eF1148E851d18E04c37104E045041c3 (BscTestnet)
 
 ### HeroArenaBattle
-### 0x923a3d06b32a613d4B6F22da444a277b7BcDFB1D (BscTestnet)
+//0x923a3d06b32a613d4B6F22da444a277b7BcDFB1D (BscTestnet)
 0x2A66f1e918772aC3dfc5B10CC2642fe9992E6fA1 (BscTestnet)
 
 ### AVATAR_ROLE
@@ -52,3 +52,7 @@
 
 ### LIQUIDATOR_ROLE
 0x5e17fc5225d4a099df75359ce1f405503ca79498a8dc46a7d583235a0ee45c16
+
+## License
+This project is licensed under the MIT License - see the 
+[LICENSE](LICENSE) file for details.

@@ -18,3 +18,7 @@
 
 # Hardhat coverage reports
 /coverage
+
+.idea/
+.DS_Store
+*.swp
