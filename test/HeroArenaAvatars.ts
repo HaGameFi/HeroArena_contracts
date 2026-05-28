@@ -376,4 +376,70 @@ describe("HeroArenaAvatars", async function () {
       assert.equal(await avatars.read.tokenOfOwnerByIndex([user1, 0n]), tokenId);
     });
   });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // AAI: getAvatarIdBatch returns INVALID_AVATAR_ID for missing tokens
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("AAI: invalid-token sentinel in batch", async function () {
+    it("returns INVALID_AVATAR_ID for never-minted tokenId", async function () {
+      const { avatars } = await deploy();
+      const sentinel = await avatars.read.INVALID_AVATAR_ID();
+      const result = await avatars.read.getAvatarIdBatch([[999n]]);
+      assert.equal(result[0], sentinel);
+    });
+
+    it("returns INVALID_AVATAR_ID for burned tokenId", async function () {
+      const { avatars } = await deploy();
+      const sentinel = await avatars.read.INVALID_AVATAR_ID();
+      const tokenId = await getMintedTokenId(avatars, await avatars.write.mint([user1, 0]));
+      await avatars.write.burn([tokenId]);
+      const result = await avatars.read.getAvatarIdBatch([[tokenId]]);
+      assert.equal(result[0], sentinel);
+    });
+
+    it("distinguishes avatarId 0 (real) from missing token (sentinel)", async function () {
+      const { avatars } = await deploy();
+      const sentinel = await avatars.read.INVALID_AVATAR_ID();
+      // avatarId 0 is a valid type and previously indistinguishable from "missing".
+      const realZero = await getMintedTokenId(avatars, await avatars.write.mint([user1, 0]));
+      const missing  = 99999n;
+      const result   = await avatars.read.getAvatarIdBatch([[realZero, missing]]);
+      assert.equal(result[0], 0);
+      assert.equal(result[1], sentinel);
+    });
+
+    it("tokenExists returns false for missing/burned and true for live", async function () {
+      const { avatars } = await deploy();
+      const tokenId = await getMintedTokenId(avatars, await avatars.write.mint([user1, 0]));
+      assert.equal(await avatars.read.tokenExists([tokenId]), true);
+      assert.equal(await avatars.read.tokenExists([999n]), false);
+      await avatars.write.burn([tokenId]);
+      assert.equal(await avatars.read.tokenExists([tokenId]), false);
+    });
+
+    it("mint reverts when called with the reserved sentinel avatarId", async function () {
+      const { avatars } = await deploy();
+      const sentinel = await avatars.read.INVALID_AVATAR_ID();
+      await assert.rejects(
+        avatars.write.mint([user1, sentinel]),
+        /Reserved avatarId/,
+      );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // MEE: AvatarMetadataUpdated event
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("MEE: AvatarMetadataUpdated event", async function () {
+    it("emits when setAvatarNameAndCreatedTimestamp is called", async function () {
+      const { avatars } = await deploy();
+      await viem.assertions.emit(
+        avatars.write.setAvatarNameAndCreatedTimestamp([42, "Brand New Hero"]),
+        avatars,
+        "AvatarMetadataUpdated",
+      );
+    });
+  });
 });

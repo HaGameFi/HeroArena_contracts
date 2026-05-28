@@ -565,4 +565,273 @@ describe("HapSystem", async function () {
       assert.equal(await treasury.read.totalReceived([token.address]), P("500"));
     });
   });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // HapToken — TBB: transferFrom blacklist bypass
+  // ══════════════════════════════════════════════════════════════════════════
+
+  describe("HapToken — TBB transferFrom spender blacklist", async function () {
+    it("blacklisted spender cannot call transferFrom even with prior allowance", async function () {
+      const token = await viem.deployContract("HapToken", [deployer]);
+      // Owner approves `user` as a spender of 1000 HAP.
+      await token.write.approve([user, P("1000")]);
+      // Then `user` is blacklisted.
+      await token.write.blacklist([user]);
+      // The spender (`user`) must now be blocked from calling transferFrom,
+      // even though both `from` and `to` are clean.
+      await assert.rejects(
+        token.write.transferFrom(
+          [deployer, guardian, P("1")],
+          { account: userClient.account },
+        ),
+      );
+    });
+
+    it("non-blacklisted spender can transferFrom normally (sanity)", async function () {
+      const token = await viem.deployContract("HapToken", [deployer]);
+      await token.write.approve([user, P("1000")]);
+      await token.write.transferFrom(
+        [deployer, guardian, P("100")],
+        { account: userClient.account },
+      );
+      assert.equal(await token.read.balanceOf([guardian]), P("100"));
+    });
+
+    it("blacklisted spender cannot call burnFrom either (consistency)", async function () {
+      const token = await viem.deployContract("HapToken", [deployer]);
+      await token.write.approve([user, P("1000")]);
+      await token.write.blacklist([user]);
+      await assert.rejects(
+        token.write.burnFrom(
+          [deployer, P("1")],
+          { account: userClient.account },
+        ),
+      );
+    });
+
+    it("non-blacklisted spender can burnFrom (sanity)", async function () {
+      const token = await viem.deployContract("HapToken", [deployer]);
+      await token.write.approve([user, P("1000")]);
+      const supplyBefore = await token.read.totalSupply();
+      await token.write.burnFrom(
+        [deployer, P("100")],
+        { account: userClient.account },
+      );
+      assert.equal(await token.read.totalSupply(), supplyBefore - P("100"));
+      assert.equal(await token.read.totalBurned(), P("100"));
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // HapVesting — RBV: revoke() before TGE
+  // ══════════════════════════════════════════════════════════════════════════
+
+  describe("HapVesting — RBV pre-TGE revoke safety", async function () {
+    it("revoke() before TGE does not break vested/releasable views after TGE", async function () {
+      const { vesting, tgeTimestamp } = await deploySystem();
+      // Revoke a revocable schedule (TEAM id=4) BEFORE TGE.
+      await vesting.write.revoke([4n]);
+
+      // Now jump well past TGE. The vested/releasable arithmetic must remain
+      // safe — without the fix, `effectiveTime - tgeTimestamp` would underflow
+      // and these calls would revert permanently for the revoked schedule.
+      await advanceTimeTo(tgeTimestamp + 24n * ONE_MONTH);
+
+      assert.equal(await vesting.read.computeVestedAmount([4n]), 0n);
+      assert.equal(await vesting.read.computeReleasableAmount([4n]), 0n);
+    });
+
+    it("post-TGE behaviour of an un-revoked schedule is unchanged (regression)", async function () {
+      const { vesting, tgeTimestamp } = await deploySystem();
+      // ADVISORS (id=5): cliff 6mo. After 6mo + a tick, some linear vesting is due.
+      await advanceTimeTo(tgeTimestamp + 6n * ONE_MONTH + ONE_HOUR);
+      const vested = await vesting.read.computeVestedAmount([5n]);
+      assert.ok(vested > 0n, "ADVISORS should have positive vested after cliff");
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // HapVesting — CSP: completed/revoked schedules free their slot
+  // ══════════════════════════════════════════════════════════════════════════
+
+  describe("HapVesting — CSP active slot recycling", async function () {
+    async function freshVesting() {
+      const token = await viem.deployContract("HapToken", [deployer]);
+      const block = await publicClient.getBlock();
+      const tge   = block.timestamp + 2n * ONE_HOUR + 60n;
+      const v     = await viem.deployContract("HapVesting", [token.address, tge, deployer]);
+      // Fund vesting with enough HAP to support many small schedules.
+      await token.write.transfer([v.address, P("1000")]);
+      return { token, vesting: v, tge };
+    }
+
+    it("createVestingSchedule increments activeScheduleCount", async function () {
+      const { vesting } = await freshVesting();
+      assert.equal(await vesting.read.activeScheduleCount([user]), 0n);
+      await vesting.write.createVestingSchedule(
+        [user, LABEL("LIQ"), P("1"), P("1"), 0n, 0n, false],
+      );
+      assert.equal(await vesting.read.activeScheduleCount([user]), 1n);
+    });
+
+    it("full release frees the slot, allowing a new schedule even after cap", async function () {
+      const { vesting, tge } = await freshVesting();
+
+      // Create 50 LIQUIDITY-style schedules for `user` (100% TGE, vestingDuration=0).
+      for (let i = 0; i < 50; i++) {
+        await vesting.write.createVestingSchedule(
+          [user, LABEL("LIQ"), P("1"), P("1"), 0n, 0n, false],
+        );
+      }
+      assert.equal(await vesting.read.activeScheduleCount([user]), 50n);
+
+      // The 51st must revert (cap == 50 active).
+      await assert.rejects(
+        vesting.write.createVestingSchedule(
+          [user, LABEL("LIQ"), P("1"), P("1"), 0n, 0n, false],
+        ),
+      );
+
+      // After TGE, releaseAllMine() makes every schedule fully released.
+      await advanceTimeTo(tge);
+      await vesting.write.releaseAllMine({ account: userClient.account });
+      assert.equal(await vesting.read.activeScheduleCount([user]), 0n);
+
+      // Now a fresh schedule can be created — the cap is on active, not historical.
+      await vesting.write.createVestingSchedule(
+        [user, LABEL("LIQ_NEW"), P("1"), P("1"), 0n, 0n, false],
+      );
+      assert.equal(await vesting.read.activeScheduleCount([user]), 1n);
+    });
+
+    it("revoke decrements activeScheduleCount", async function () {
+      const { vesting, tgeTimestamp } = await deploySystem();
+      const before = await vesting.read.activeScheduleCount([deployer]);
+      // TEAM (id=4) is revocable, beneficiary=deployer.
+      await advanceTimeTo(tgeTimestamp + ONE_HOUR);
+      await vesting.write.revoke([4n]);
+      assert.equal(await vesting.read.activeScheduleCount([deployer]), before - 1n);
+    });
+
+    it("historical beneficiarySchedules entries are NOT removed (preserves audit trail)", async function () {
+      const { vesting, tge } = await freshVesting();
+      await vesting.write.createVestingSchedule(
+        [user, LABEL("LIQ"), P("1"), P("1"), 0n, 0n, false],
+      );
+      await advanceTimeTo(tge);
+      await vesting.write.releaseAllMine({ account: userClient.account });
+      // activeScheduleCount drops to 0, but the historical list still contains the id.
+      assert.equal(await vesting.read.activeScheduleCount([user]), 0n);
+      const ids = await vesting.read.getSchedulesOf([user]);
+      assert.equal(ids.length, 1);
+    });
+
+    it("getActiveSchedulesOf returns only still-active IDs", async function () {
+      const { vesting, tge } = await freshVesting();
+      // Three schedules — two LIQUIDITY (will fully release at TGE) and one with
+      // a long cliff that stays active.
+      await vesting.write.createVestingSchedule(
+        [user, LABEL("LIQ1"), P("1"), P("1"), 0n, 0n, false],
+      );
+      await vesting.write.createVestingSchedule(
+        [user, LABEL("LIQ2"), P("1"), P("1"), 0n, 0n, false],
+      );
+      await vesting.write.createVestingSchedule(
+        [user, LABEL("LOCK"), P("1"), 0n, 30n * 24n * 60n * 60n, 30n * 24n * 60n * 60n, false],
+      );
+
+      assert.equal(await vesting.read.activeScheduleCount([user]), 3n);
+      const allActive = await vesting.read.getActiveSchedulesOf([user]);
+      assert.equal(allActive.length, 3);
+
+      await advanceTimeTo(tge);
+      await vesting.write.releaseAllMine({ account: userClient.account });
+
+      // Two LIQ schedules removed; the long-cliff one still active.
+      assert.equal(await vesting.read.activeScheduleCount([user]), 1n);
+      const stillActive = await vesting.read.getActiveSchedulesOf([user]);
+      assert.equal(stillActive.length, 1);
+      // Historical list still has all three.
+      assert.equal((await vesting.read.getSchedulesOf([user])).length, 3);
+    });
+
+    it("releaseAllMine iterates only the ACTIVE list, not the full history", async function () {
+      const { vesting, tge } = await freshVesting();
+      // Create N LIQUIDITY schedules, fully release them all, then check that
+      // a second releaseAllMine() correctly reverts with NothingToRelease — i.e.
+      // it isn't doing work for completed schedules.
+      for (let i = 0; i < 10; i++) {
+        await vesting.write.createVestingSchedule(
+          [user, LABEL(`L${i}`), P("1"), P("1"), 0n, 0n, false],
+        );
+      }
+      await advanceTimeTo(tge);
+      await vesting.write.releaseAllMine({ account: userClient.account });
+      // Active list is now empty.
+      assert.equal(await vesting.read.activeScheduleCount([user]), 0n);
+      // A subsequent call must revert because the active list is empty — not
+      // succeed by walking the historical entries and finding 0 releasable.
+      await assert.rejects(
+        vesting.write.releaseAllMine({ account: userClient.account }),
+      );
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // HapTreasury — IPG: receive() must respect pause
+  // ══════════════════════════════════════════════════════════════════════════
+
+  describe("HapTreasury — IPG paused receive guard", async function () {
+    it("direct BNB transfer reverts when paused", async function () {
+      const treasury = await viem.deployContract("HapTreasury", [deployer, guardian]);
+      await treasury.write.emergencyPause({ account: guardianClient.account });
+      await assert.rejects(
+        deployerClient.sendTransaction({ to: treasury.address, value: P("1") }),
+      );
+    });
+
+    it("direct BNB transfer succeeds when not paused", async function () {
+      const treasury = await viem.deployContract("HapTreasury", [deployer, guardian]);
+      await deployerClient.sendTransaction({ to: treasury.address, value: P("1") });
+      assert.equal(await publicClient.getBalance({ address: treasury.address }), P("1"));
+      assert.equal(await treasury.read.totalReceived([zeroAddress]), P("1"));
+    });
+
+    it("unpause restores direct BNB acceptance", async function () {
+      const treasury = await viem.deployContract("HapTreasury", [deployer, guardian]);
+      await treasury.write.emergencyPause({ account: guardianClient.account });
+      await treasury.write.unpause();
+      await deployerClient.sendTransaction({ to: treasury.address, value: P("1") });
+      assert.equal(await treasury.read.totalReceived([zeroAddress]), P("1"));
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // HapTreasury — PTAI: fee-on-transfer accounting
+  // ══════════════════════════════════════════════════════════════════════════
+
+  describe("HapTreasury — PTAI fee-on-transfer accounting", async function () {
+    it("credits totalReceived with the ACTUAL amount delivered, not the requested amount", async function () {
+      const treasury = await viem.deployContract("HapTreasury", [deployer, guardian]);
+      const fot      = await viem.deployContract("MockFeeOnTransferERC20");
+      await fot.write.mint([deployer, P("1000")]);
+      await fot.write.approve([treasury.address, P("1000")]);
+
+      // FoT burns 1% on transfer; calling receiveFunds(100) should credit 99.
+      await treasury.write.receiveFunds([fot.address, P("100"), "TEST"]);
+      assert.equal(await treasury.read.totalReceived([fot.address]), P("99"));
+      assert.equal(await fot.read.balanceOf([treasury.address]), P("99"));
+    });
+
+    it("standard ERC20 transfer (no fee) credits the full amount (regression)", async function () {
+      const { token, treasury } = await (async () => {
+        const t  = await viem.deployContract("HapToken",   [deployer]);
+        const tr = await viem.deployContract("HapTreasury", [deployer, guardian]);
+        return { token: t, treasury: tr };
+      })();
+      await token.write.approve([treasury.address, P("100")]);
+      await treasury.write.receiveFunds([token.address, P("100"), "TEST"]);
+      assert.equal(await treasury.read.totalReceived([token.address]), P("100"));
+    });
+  });
 });

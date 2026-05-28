@@ -42,9 +42,9 @@ contract HeroArenaBattleTest is Test {
         hapToken  = new MockERC20();
         profileSC = new HeroArenaProfile(IERC20(address(hapToken)), 0, 0);
         profileSC.addTeam("Warriors", "Warriors team");
-        vm.prank(user1); profileSC.createProfile(1);
-        vm.prank(user2); profileSC.createProfile(1);
-        vm.prank(user3); profileSC.createProfile(1);
+        vm.prank(user1); profileSC.createProfile(1, type(uint256).max);
+        vm.prank(user2); profileSC.createProfile(1, type(uint256).max);
+        vm.prank(user3); profileSC.createProfile(1, type(uint256).max);
 
         betToken   = new MockERC20();
         bonusToken = new MockERC20();

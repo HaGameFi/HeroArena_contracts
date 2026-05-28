@@ -53,7 +53,7 @@ describe("HeroArenaProfile", async function () {
   }
 
   async function register(profile: any, userClient: any) {
-    await profile.write.createProfile([1n], { account: userClient.account });
+    await profile.write.createProfile([1n, maxUint256], { account: userClient.account });
   }
 
   async function mintNFT(nftContract: any, profile: any, userClient: any): Promise<bigint> {
@@ -250,7 +250,7 @@ describe("HeroArenaProfile", async function () {
     it("emits UserNew", async function () {
       const { profile } = await deployAll();
       await viem.assertions.emitWithArgs(
-        profile.write.createProfile([1n], { account: user1Client.account }),
+        profile.write.createProfile([1n, maxUint256], { account: user1Client.account }),
         profile,
         "UserNew",
         [getAddress(user1), 1n],
@@ -284,7 +284,7 @@ describe("HeroArenaProfile", async function () {
       const { profile } = await deployAll();
       await register(profile, user1Client);
       await assert.rejects(
-        profile.write.createProfile([1n], { account: user1Client.account }),
+        profile.write.createProfile([1n, maxUint256], { account: user1Client.account }),
         /User is registered/,
       );
     });
@@ -292,7 +292,7 @@ describe("HeroArenaProfile", async function () {
     it("reverts on invalid team id", async function () {
       const { profile } = await deployAll();
       await assert.rejects(
-        profile.write.createProfile([99n], { account: user1Client.account }),
+        profile.write.createProfile([99n, maxUint256], { account: user1Client.account }),
         /TeamId invalid/,
       );
     });
@@ -301,7 +301,7 @@ describe("HeroArenaProfile", async function () {
       const { profile } = await deployAll();
       await profile.write.makeTeamNotJoinable([1n]);
       await assert.rejects(
-        profile.write.createProfile([1n], { account: user1Client.account }),
+        profile.write.createProfile([1n, maxUint256], { account: user1Client.account }),
         /not joinable/,
       );
     });
@@ -317,7 +317,7 @@ describe("HeroArenaProfile", async function () {
       await register(profile, user1Client);
       const tokenId = await mintNFT(avatarNFT, profile, user1Client);
 
-      await profile.write.updateAvatar([avatarNFT.address, tokenId], {
+      await profile.write.updateAvatar([avatarNFT.address, tokenId, maxUint256], {
         account: user1Client.account,
       });
 
@@ -336,8 +336,8 @@ describe("HeroArenaProfile", async function () {
       const tokenId1 = await mintNFT(avatarNFT, profile, user1Client);
       const tokenId2 = await mintNFT(avatarNFT, profile, user1Client);
 
-      await profile.write.updateAvatar([avatarNFT.address, tokenId1], { account: user1Client.account });
-      await profile.write.updateAvatar([avatarNFT.address, tokenId2], { account: user1Client.account });
+      await profile.write.updateAvatar([avatarNFT.address, tokenId1, maxUint256], { account: user1Client.account });
+      await profile.write.updateAvatar([avatarNFT.address, tokenId2, maxUint256], { account: user1Client.account });
 
       assert.equal((await avatarNFT.read.ownerOf([tokenId1])).toLowerCase(), user1.toLowerCase());
       assert.equal(
@@ -352,7 +352,7 @@ describe("HeroArenaProfile", async function () {
       const tokenId = await mintNFT(avatarNFT, profile, user1Client);
 
       await viem.assertions.emitWithArgs(
-        profile.write.updateAvatar([avatarNFT.address, tokenId], { account: user1Client.account }),
+        profile.write.updateAvatar([avatarNFT.address, tokenId, maxUint256], { account: user1Client.account }),
         profile,
         "UserAvatarUpdate",
         [getAddress(user1), getAddress(avatarNFT.address), tokenId],
@@ -365,7 +365,7 @@ describe("HeroArenaProfile", async function () {
       const tokenId  = await mintNFT(avatarNFT, profile, user1Client);
       const balBefore = await hapToken.read.balanceOf([user1]);
 
-      await profile.write.updateAvatar([avatarNFT.address, tokenId], { account: user1Client.account });
+      await profile.write.updateAvatar([avatarNFT.address, tokenId, maxUint256], { account: user1Client.account });
       assert.equal(await hapToken.read.balanceOf([user1]), balBefore - FEE_UPDATE);
     });
 
@@ -373,7 +373,7 @@ describe("HeroArenaProfile", async function () {
       const { profile, avatarNFT } = await deployAll();
       const tokenId = await mintNFT(avatarNFT, profile, user1Client);
       await assert.rejects(
-        profile.write.updateAvatar([avatarNFT.address, tokenId], { account: user1Client.account }),
+        profile.write.updateAvatar([avatarNFT.address, tokenId, maxUint256], { account: user1Client.account }),
         /User not registered/,
       );
     });
@@ -382,7 +382,7 @@ describe("HeroArenaProfile", async function () {
       const { profile } = await deployAll();
       await register(profile, user1Client);
       await assert.rejects(
-        profile.write.updateAvatar(["0x000000000000000000000000000000000000dEaD", 1n], {
+        profile.write.updateAvatar(["0x000000000000000000000000000000000000dEaD", 1n, maxUint256], {
           account: user1Client.account,
         }),
         /Avatar address invalid/,
@@ -394,7 +394,7 @@ describe("HeroArenaProfile", async function () {
       await register(profile, user1Client);
       const tokenId = await mintNFT(avatarNFT, profile, user2Client);
       await assert.rejects(
-        profile.write.updateAvatar([avatarNFT.address, tokenId], { account: user1Client.account }),
+        profile.write.updateAvatar([avatarNFT.address, tokenId, maxUint256], { account: user1Client.account }),
         /Only owner can transfer his\/her NFT/,
       );
     });
@@ -410,7 +410,7 @@ describe("HeroArenaProfile", async function () {
       await register(profile, user1Client);
       const tokenId = await mintNFT(frameNFT, profile, user1Client);
 
-      await profile.write.updateFrame([frameNFT.address, tokenId], { account: user1Client.account });
+      await profile.write.updateFrame([frameNFT.address, tokenId, maxUint256], { account: user1Client.account });
 
       assert.equal(
         (await frameNFT.read.ownerOf([tokenId])).toLowerCase(),
@@ -424,8 +424,8 @@ describe("HeroArenaProfile", async function () {
       const tokenId1 = await mintNFT(frameNFT, profile, user1Client);
       const tokenId2 = await mintNFT(frameNFT, profile, user1Client);
 
-      await profile.write.updateFrame([frameNFT.address, tokenId1], { account: user1Client.account });
-      await profile.write.updateFrame([frameNFT.address, tokenId2], { account: user1Client.account });
+      await profile.write.updateFrame([frameNFT.address, tokenId1, maxUint256], { account: user1Client.account });
+      await profile.write.updateFrame([frameNFT.address, tokenId2, maxUint256], { account: user1Client.account });
 
       assert.equal((await frameNFT.read.ownerOf([tokenId1])).toLowerCase(), user1.toLowerCase());
       assert.equal(
@@ -440,7 +440,7 @@ describe("HeroArenaProfile", async function () {
       const tokenId = await mintNFT(frameNFT, profile, user1Client);
 
       await viem.assertions.emitWithArgs(
-        profile.write.updateFrame([frameNFT.address, tokenId], { account: user1Client.account }),
+        profile.write.updateFrame([frameNFT.address, tokenId, maxUint256], { account: user1Client.account }),
         profile,
         "UserFrameUpdate",
         [getAddress(user1), getAddress(frameNFT.address), tokenId],
@@ -453,7 +453,7 @@ describe("HeroArenaProfile", async function () {
       const tokenId   = await mintNFT(frameNFT, profile, user1Client);
       const balBefore = await hapToken.read.balanceOf([user1]);
 
-      await profile.write.updateFrame([frameNFT.address, tokenId], { account: user1Client.account });
+      await profile.write.updateFrame([frameNFT.address, tokenId, maxUint256], { account: user1Client.account });
       assert.equal(await hapToken.read.balanceOf([user1]), balBefore - FEE_UPDATE);
     });
 
@@ -461,7 +461,7 @@ describe("HeroArenaProfile", async function () {
       const { profile, frameNFT } = await deployAll();
       const tokenId = await mintNFT(frameNFT, profile, user1Client);
       await assert.rejects(
-        profile.write.updateFrame([frameNFT.address, tokenId], { account: user1Client.account }),
+        profile.write.updateFrame([frameNFT.address, tokenId, maxUint256], { account: user1Client.account }),
         /User not registered/,
       );
     });
@@ -470,7 +470,7 @@ describe("HeroArenaProfile", async function () {
       const { profile } = await deployAll();
       await register(profile, user1Client);
       await assert.rejects(
-        profile.write.updateFrame(["0x000000000000000000000000000000000000dEaD", 1n], {
+        profile.write.updateFrame(["0x000000000000000000000000000000000000dEaD", 1n, maxUint256], {
           account: user1Client.account,
         }),
         /Frame address invalid/,
@@ -482,7 +482,7 @@ describe("HeroArenaProfile", async function () {
       await register(profile, user1Client);
       const tokenId = await mintNFT(frameNFT, profile, user2Client);
       await assert.rejects(
-        profile.write.updateFrame([frameNFT.address, tokenId], { account: user1Client.account }),
+        profile.write.updateFrame([frameNFT.address, tokenId, maxUint256], { account: user1Client.account }),
         /Only owner can transfer his\/her NFT/,
       );
     });
@@ -706,6 +706,201 @@ describe("HeroArenaProfile", async function () {
         profile.read.getUserProfile([user1]),
         /User not registered/,
       );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PNL: detachAvatar / detachFrame
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("PNL: NFT detach without replacement", async function () {
+    it("detachAvatar returns the NFT and clears the slot", async function () {
+      const { profile, avatarNFT } = await deployAll();
+      await register(profile, user1Client);
+      const tokenId = await mintNFT(avatarNFT, profile, user1Client);
+      await profile.write.updateAvatar(
+        [avatarNFT.address, tokenId, maxUint256],
+        { account: user1Client.account },
+      );
+      assert.equal((await avatarNFT.read.ownerOf([tokenId])).toLowerCase(), profile.address.toLowerCase());
+
+      await profile.write.detachAvatar({ account: user1Client.account });
+
+      assert.equal((await avatarNFT.read.ownerOf([tokenId])).toLowerCase(), user1.toLowerCase());
+      const [, , , avatar, tid] = await profile.read.getUserProfile([user1]);
+      assert.equal(avatar, zeroAddress);
+      assert.equal(tid, 0n);
+    });
+
+    it("detachFrame returns the NFT and clears the slot", async function () {
+      const { profile, frameNFT } = await deployAll();
+      await register(profile, user1Client);
+      const tokenId = await mintNFT(frameNFT, profile, user1Client);
+      await profile.write.updateFrame(
+        [frameNFT.address, tokenId, maxUint256],
+        { account: user1Client.account },
+      );
+      assert.equal((await frameNFT.read.ownerOf([tokenId])).toLowerCase(), profile.address.toLowerCase());
+
+      await profile.write.detachFrame({ account: user1Client.account });
+
+      assert.equal((await frameNFT.read.ownerOf([tokenId])).toLowerCase(), user1.toLowerCase());
+    });
+
+    it("detachAvatar reverts when no avatar attached", async function () {
+      const { profile } = await deployAll();
+      await register(profile, user1Client);
+      await assert.rejects(
+        profile.write.detachAvatar({ account: user1Client.account }),
+        /No avatar attached/,
+      );
+    });
+
+    it("detachFrame reverts when no frame attached", async function () {
+      const { profile } = await deployAll();
+      await register(profile, user1Client);
+      await assert.rejects(
+        profile.write.detachFrame({ account: user1Client.account }),
+        /No frame attached/,
+      );
+    });
+
+    it("detachAvatar reverts for unregistered users", async function () {
+      const { profile } = await deployAll();
+      await assert.rejects(
+        profile.write.detachAvatar({ account: user1Client.account }),
+        /User not registered/,
+      );
+    });
+
+    it("detachAvatar still works after collection AVATAR_ROLE is revoked (no lockup)", async function () {
+      const { profile, avatarNFT, AVATAR_ROLE } = await deployAll();
+      await register(profile, user1Client);
+      const tokenId = await mintNFT(avatarNFT, profile, user1Client);
+      await profile.write.updateAvatar(
+        [avatarNFT.address, tokenId, maxUint256],
+        { account: user1Client.account },
+      );
+      // Before the PNL fix, revoking the role would have stranded user1's NFT
+      // inside the contract since updateAvatar() requires AVATAR_ROLE on the
+      // new address — and there was no other exit.
+      await profile.write.revokeRole([AVATAR_ROLE, avatarNFT.address]);
+
+      await profile.write.detachAvatar({ account: user1Client.account });
+      assert.equal((await avatarNFT.read.ownerOf([tokenId])).toLowerCase(), user1.toLowerCase());
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PSR: fee slippage protection on payable user flows
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("PSR: fee slippage protection", async function () {
+    it("createProfile reverts when current fee exceeds caller cap", async function () {
+      const { profile } = await deployAll();
+      await assert.rejects(
+        profile.write.createProfile(
+          [1n, FEE_REGISTER - 1n],
+          { account: user1Client.account },
+        ),
+        /Fee exceeds maximum/,
+      );
+    });
+
+    it("createProfile succeeds when cap is exactly the current fee", async function () {
+      const { profile } = await deployAll();
+      await profile.write.createProfile(
+        [1n, FEE_REGISTER],
+        { account: user1Client.account },
+      );
+      assert.equal(await profile.read.hasRegistered([user1]), true);
+    });
+
+    it("updateAvatar reverts when current fee exceeds caller cap", async function () {
+      const { profile, avatarNFT } = await deployAll();
+      await register(profile, user1Client);
+      const tokenId = await mintNFT(avatarNFT, profile, user1Client);
+      await assert.rejects(
+        profile.write.updateAvatar(
+          [avatarNFT.address, tokenId, FEE_UPDATE - 1n],
+          { account: user1Client.account },
+        ),
+        /Fee exceeds maximum/,
+      );
+    });
+
+    it("updateFrame reverts when current fee exceeds caller cap", async function () {
+      const { profile, frameNFT } = await deployAll();
+      await register(profile, user1Client);
+      const tokenId = await mintNFT(frameNFT, profile, user1Client);
+      await assert.rejects(
+        profile.write.updateFrame(
+          [frameNFT.address, tokenId, FEE_UPDATE - 1n],
+          { account: user1Client.account },
+        ),
+        /Fee exceeds maximum/,
+      );
+    });
+
+    it("admin fee front-run is blocked by caller cap", async function () {
+      const { profile } = await deployAll();
+      // Admin doubles the fee after user has approved.
+      await profile.write.updateFeeCost([FEE_REGISTER * 2n, FEE_UPDATE]);
+      // User submits with the original fee as their cap → must revert.
+      await assert.rejects(
+        profile.write.createProfile(
+          [1n, FEE_REGISTER],
+          { account: user1Client.account },
+        ),
+        /Fee exceeds maximum/,
+      );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ORD: Ownable + AccessControl stay synchronized
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("ORD: ownership-role sync", async function () {
+    it("transferOwnership grants DEFAULT_ADMIN_ROLE to the new owner", async function () {
+      const { profile } = await deployAll();
+      const adminRole = await profile.read.DEFAULT_ADMIN_ROLE();
+      await profile.write.transferOwnership([user1]);
+      assert.equal(await profile.read.hasRole([adminRole, user1]), true);
+    });
+
+    it("transferOwnership revokes DEFAULT_ADMIN_ROLE from the previous owner", async function () {
+      const { profile } = await deployAll();
+      const adminRole = await profile.read.DEFAULT_ADMIN_ROLE();
+      await profile.write.transferOwnership([user1]);
+      assert.equal(await profile.read.hasRole([adminRole, owner]), false);
+    });
+
+    it("new owner can manage AccessControl roles after transfer", async function () {
+      const { profile, AVATAR_ROLE } = await deployAll();
+      await profile.write.transferOwnership([user1]);
+      const hash = await profile.write.revokeRole(
+        [AVATAR_ROLE, user2],
+        { account: user1Client.account },
+      );
+      const receipt = await publicClient.getTransactionReceipt({ hash });
+      assert.equal(receipt.status, "success");
+    });
+
+    it("previous owner can no longer manage roles after transfer", async function () {
+      const { profile, AVATAR_ROLE } = await deployAll();
+      await profile.write.transferOwnership([user1]);
+      await assert.rejects(
+        profile.write.grantRole([AVATAR_ROLE, user2]),
+        /AccessControlUnauthorizedAccount/,
+      );
+    });
+
+    it("renounceOwnership revokes admin role from the deployer", async function () {
+      const { profile } = await deployAll();
+      const adminRole = await profile.read.DEFAULT_ADMIN_ROLE();
+      await profile.write.renounceOwnership();
+      assert.equal(await profile.read.hasRole([adminRole, owner]), false);
     });
   });
 });

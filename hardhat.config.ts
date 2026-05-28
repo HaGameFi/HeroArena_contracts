@@ -7,6 +7,16 @@ export default defineConfig({
     profiles: {
       default: {
         version: "0.8.29",
+        // Optimizer ON for default too: the constructor of HeroArenaMiningFactoryV1
+        // inlines 90 setAvatarNameAndCreatedTimestamp calls and pushes init bytecode
+        // close to the EIP-3860 49152-byte limit. Optimizer keeps it deployable on
+        // local hardhat runs (matches the production profile).
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 200,
+          },
+        },
       },
       production: {
         version: "0.8.29",

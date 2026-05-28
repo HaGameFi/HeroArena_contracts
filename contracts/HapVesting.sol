@@ -94,8 +94,23 @@ contract HapVesting is AccessControl, ReentrancyGuard {
     ///      (e.g. Treasury can receive P2E, Staking, Treasury, and Ecosystem allocations simultaneously)
     mapping(uint256 => VestingSchedule) public schedules;
 
-    /// @notice Beneficiary address => all scheduleIds held by that address
+    /// @notice Beneficiary address => all scheduleIds ever held by that address.
+    /// @dev    Append-only history, used by getSchedulesOf() / frontend visibility.
+    ///         The per-beneficiary cap and the batch-release iteration both operate
+    ///         on `activeScheduleIds` instead so completed or revoked schedules do
+    ///         not permanently consume slots or waste gas.
     mapping(address => uint256[]) public beneficiarySchedules;
+
+    /// @notice Beneficiary address => scheduleIds that are still active.
+    /// @dev    "Active" = not fully released AND not revoked. This is the list
+    ///         releaseAllMine() iterates, and its length is what
+    ///         MAX_SCHEDULES_PER_BENEFICIARY caps.
+    mapping(address => uint256[]) public activeScheduleIds;
+
+    /// @dev 1-indexed position of `scheduleId` inside activeScheduleIds[beneficiary].
+    ///      0 means the schedule is not (no longer) active. Enables O(1) removal
+    ///      via swap-and-pop.
+    mapping(uint256 => uint256) private _activeIdxPlusOne;
 
     /// @notice Next schedule ID
     uint256 public nextScheduleId;
@@ -218,8 +233,10 @@ contract HapVesting is AccessControl, ReentrancyGuard {
         // If vestingDuration == 0, tgeUnlockAmount must equal totalAmount (e.g. Liquidity 100% TGE)
         if (vestingDuration == 0 && tgeUnlockAmount != totalAmount) revert InvalidDuration();
 
-        // Cap schedules per beneficiary to keep releaseAllMine() gas-bounded
-        if (beneficiarySchedules[beneficiary].length >= MAX_SCHEDULES_PER_BENEFICIARY) revert TooManySchedules();
+        // Cap is on the ACTIVE list (also what releaseAllMine iterates), so the
+        // gas bound is preserved while fully released/revoked schedules free
+        // their slot for future allocations.
+        if (activeScheduleIds[beneficiary].length >= MAX_SCHEDULES_PER_BENEFICIARY) revert TooManySchedules();
 
         // Check that contract balance is sufficient to cover all schedules
         if (hapToken.balanceOf(address(this)) < totalAllocated + totalAmount - totalReleased) {
@@ -242,6 +259,10 @@ contract HapVesting is AccessControl, ReentrancyGuard {
         });
 
         beneficiarySchedules[beneficiary].push(scheduleId);
+        // Also push to the active list. _activeIdxPlusOne records the
+        // (1-indexed) position so _removeFromActive can do an O(1) swap-and-pop.
+        activeScheduleIds[beneficiary].push(scheduleId);
+        _activeIdxPlusOne[scheduleId] = activeScheduleIds[beneficiary].length;
 
         // Add to allBeneficiaries if not already present
         if (!_isBeneficiary[beneficiary]) {
@@ -283,6 +304,12 @@ contract HapVesting is AccessControl, ReentrancyGuard {
         schedule.released += releasable;
         totalReleased += releasable;
 
+        // Once fully released, drop the schedule from the active list so its
+        // slot is freed and releaseAllMine stops iterating it.
+        if (!schedule.revoked && schedule.released == schedule.totalAmount) {
+            _removeFromActive(scheduleId, schedule.beneficiary);
+        }
+
         hapToken.safeTransfer(schedule.beneficiary, releasable);
 
         emit TokensReleased(scheduleId, schedule.beneficiary, releasable);
@@ -293,7 +320,11 @@ contract HapVesting is AccessControl, ReentrancyGuard {
      * @dev Gas is bounded by MAX_SCHEDULES_PER_BENEFICIARY (50 schedules max per address).
      */
     function releaseAllMine() external nonReentrant {
-        uint256[] memory ids = beneficiarySchedules[msg.sender];
+        // Iterate the active list (capped at MAX_SCHEDULES_PER_BENEFICIARY) rather
+        // than the full historical list, so gas stays bounded no matter how many
+        // lifetime schedules the caller has accumulated. Snapshot to memory
+        // before mutating storage via _removeFromActive.
+        uint256[] memory ids = activeScheduleIds[msg.sender];
         uint256 totalReleasedNow = 0;
 
         for (uint256 i = 0; i < ids.length; i++) {
@@ -305,6 +336,12 @@ contract HapVesting is AccessControl, ReentrancyGuard {
 
             schedule.released += releasable;
             totalReleasedNow += releasable;
+
+            // Schedules that became fully released drop out of the active list
+            // immediately so subsequent batch releases stay short.
+            if (!schedule.revoked && schedule.released == schedule.totalAmount) {
+                _removeFromActive(scheduleId, msg.sender);
+            }
 
             emit TokensReleased(scheduleId, msg.sender, releasable);
         }
@@ -341,6 +378,12 @@ contract HapVesting is AccessControl, ReentrancyGuard {
 
         // Subtract forfeited amount from total allocated
         totalAllocated -= forfeited;
+
+        // Revoked schedules never need future processing — drop them from the
+        // active list. _removeFromActive is a no-op if the schedule was already
+        // removed (e.g. fully released earlier), so this handles the rare
+        // release-then-revoke ordering safely.
+        _removeFromActive(scheduleId, schedule.beneficiary);
 
         // Auto-release any vested but not yet claimed tokens to the beneficiary,
         // so they don't need a separate release() call after being revoked.
@@ -421,10 +464,29 @@ contract HapVesting is AccessControl, ReentrancyGuard {
     }
 
     /**
-     * @notice Returns all schedule IDs held by a given beneficiary
+     * @notice Returns all schedule IDs held by a given beneficiary, historical
+     *         and active alike (for frontend visibility / accounting).
      */
     function getSchedulesOf(address beneficiary) external view returns (uint256[] memory) {
         return beneficiarySchedules[beneficiary];
+    }
+
+    /**
+     * @notice Returns only the currently-active schedule IDs (not fully released
+     *         and not revoked) for a beneficiary. Mirrors what releaseAllMine()
+     *         iterates and what the per-beneficiary cap restricts.
+     */
+    function getActiveSchedulesOf(address beneficiary) external view returns (uint256[] memory) {
+        return activeScheduleIds[beneficiary];
+    }
+
+    /**
+     * @notice Number of currently-active schedules for a beneficiary.
+     * @dev    activeScheduleIds[beneficiary].length. Used by tests and frontends
+     *         to query the remaining slot count against MAX_SCHEDULES_PER_BENEFICIARY.
+     */
+    function activeScheduleCount(address beneficiary) external view returns (uint256) {
+        return activeScheduleIds[beneficiary].length;
     }
 
     /**
@@ -441,6 +503,32 @@ contract HapVesting is AccessControl, ReentrancyGuard {
         VestingSchedule memory schedule = schedules[scheduleId];
         if (schedule.totalAmount == 0) return 0;
         return _computeVestedAtTimestamp(schedule, timestamp);
+    }
+
+    // ========================================================================
+    // Internal: active-schedule index maintenance
+    // ========================================================================
+
+    /**
+     * @dev Removes `scheduleId` from activeScheduleIds[beneficiary] in O(1) via
+     *      swap-and-pop. No-op if the schedule is not in the active list (already
+     *      removed by an earlier full-release or revoke).
+     */
+    function _removeFromActive(uint256 scheduleId, address beneficiary) internal {
+        uint256 idxPlusOne = _activeIdxPlusOne[scheduleId];
+        if (idxPlusOne == 0) return;
+
+        uint256[] storage arr = activeScheduleIds[beneficiary];
+        uint256 idx = idxPlusOne - 1;
+        uint256 lastIdx = arr.length - 1;
+
+        if (idx != lastIdx) {
+            uint256 lastId = arr[lastIdx];
+            arr[idx] = lastId;
+            _activeIdxPlusOne[lastId] = idxPlusOne; // last item now lives at idx (1-indexed)
+        }
+        arr.pop();
+        _activeIdxPlusOne[scheduleId] = 0;
     }
 
     // ========================================================================
@@ -489,6 +577,14 @@ contract HapVesting is AccessControl, ReentrancyGuard {
         uint64 effectiveTime = timestamp;
         if (schedule.revoked && timestamp > schedule.revokedAt) {
             effectiveTime = schedule.revokedAt;
+        }
+
+        // A revocation executed before TGE has revokedAt < tgeTimestamp; treat
+        // it as zero-vested. Without this clamp, `effectiveTime - tgeTimestamp`
+        // would underflow and revert, permanently breaking vested/releasable
+        // views for the revoked schedule.
+        if (effectiveTime < tgeTimestamp) {
+            return 0;
         }
 
         // 3. Calculate elapsed time since TGE

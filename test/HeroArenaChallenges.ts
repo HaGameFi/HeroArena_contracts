@@ -234,4 +234,113 @@ describe("HeroArenaChallenges", async function () {
       assert.equal(names.length, 1000);
     });
   });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ALI: getLevelIdBatch returns INVALID_LEVEL_ID for missing challengeIds
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("ALI: invalid-challenge sentinel in batch", async function () {
+    it("returns INVALID_LEVEL_ID for never-submitted challengeId", async function () {
+      const { challenges } = await deploy();
+      const sentinel = await challenges.read.INVALID_LEVEL_ID();
+      const result = await challenges.read.getLevelIdBatch([[999n]]);
+      assert.equal(result[0], sentinel);
+    });
+
+    it("returns INVALID_LEVEL_ID for challengeId 0", async function () {
+      const { challenges } = await deploy();
+      const sentinel = await challenges.read.INVALID_LEVEL_ID();
+      const result = await challenges.read.getLevelIdBatch([[0n]]);
+      assert.equal(result[0], sentinel);
+    });
+
+    it("distinguishes lvId 0 (real submission) from missing challenge (sentinel)", async function () {
+      const { challenges } = await deploy();
+      const sentinel = await challenges.read.INVALID_LEVEL_ID();
+      // First submission to level 0 → challengeId 1, lvId 0
+      await challenges.write.submit([user1, 0]);
+      const result = await challenges.read.getLevelIdBatch([[1n, 99999n]]);
+      assert.equal(result[0], 0);          // real submission for lvId 0
+      assert.equal(result[1], sentinel);    // missing challengeId
+    });
+
+    it("challengeExists returns false for 0 / out-of-range and true for live submissions", async function () {
+      const { challenges } = await deploy();
+      assert.equal(await challenges.read.challengeExists([0n]),  false);
+      assert.equal(await challenges.read.challengeExists([1n]),  false);
+      await challenges.write.submit([user1, 0]);
+      assert.equal(await challenges.read.challengeExists([1n]),  true);
+      assert.equal(await challenges.read.challengeExists([2n]),  false);
+    });
+
+    it("setLevelNameAndRewardPoints reverts on the reserved INVALID_LEVEL_ID", async function () {
+      const { challenges } = await deploy();
+      const sentinel = await challenges.read.INVALID_LEVEL_ID();
+      await assert.rejects(
+        challenges.write.setLevelNameAndRewardPoints([sentinel, "x", 0n]),
+        /Reserved lvId/,
+      );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // MRB: constructor bootstraps CHALLENGE_ADMIN_ROLE
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("MRB: deployer gets CHALLENGE_ADMIN_ROLE without manual grant", async function () {
+    it("a fresh contract is immediately usable by the deployer", async function () {
+      // No deploy() helper here — exercises the raw constructor state.
+      const challenges = await viem.deployContract("HeroArenaChallenges");
+      // No grantRole call. Setting a level must succeed.
+      await challenges.write.setLevelNameAndRewardPoints([0, "Lvl 0", 5n]);
+      const [names] = await challenges.read.getLevelNameAndPointsBatch([[0]]);
+      assert.equal(names[0], "Lvl 0");
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // MC: submit input validation
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("MC: submit input validation", async function () {
+    it("reverts when _to is zero", async function () {
+      const { challenges } = await deploy();
+      const ZERO = "0x0000000000000000000000000000000000000000";
+      await assert.rejects(
+        challenges.write.submit([ZERO, 0]),
+        /Recipient cannot be zero/,
+      );
+    });
+
+    it("reverts when the level has never been configured", async function () {
+      const { challenges } = await deploy();
+      // Level 99 has not been set up via setLevelNameAndRewardPoints.
+      await assert.rejects(
+        challenges.write.submit([user1, 99]),
+        /Level not configured/,
+      );
+    });
+
+    it("accepts a freshly-configured level", async function () {
+      const { challenges } = await deploy();
+      await challenges.write.setLevelNameAndRewardPoints([42, "Fresh", 1n]);
+      await challenges.write.submit([user1, 42]);
+      assert.equal(await challenges.read.lvCount([42]), 1n);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // MEE: LevelMetadataUpdated event
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("MEE: LevelMetadataUpdated event", async function () {
+    it("emits when a level's metadata is set", async function () {
+      const { challenges } = await deploy();
+      await viem.assertions.emit(
+        challenges.write.setLevelNameAndRewardPoints([7, "Brand New", 99n]),
+        challenges,
+        "LevelMetadataUpdated",
+      );
+    });
+  });
 });

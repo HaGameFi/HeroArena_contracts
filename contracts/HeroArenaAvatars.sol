@@ -5,6 +5,12 @@ import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
 contract HeroArenaAvatars is ERC721Enumerable, Ownable {
+    /// @notice Reserved sentinel returned by getAvatarIdBatch for tokenIds that do
+    ///         not exist or have been burned. avatarId of `INVALID_AVATAR_ID` can
+    ///         never be minted, so callers can distinguish a real avatarId 0 from
+    ///         a missing token.
+    uint8 public constant INVALID_AVATAR_ID = type(uint8).max;
+
     // Mapping the number of tokens for each avatarId
     mapping(uint8 => uint256) public avatarCount;
 
@@ -17,11 +23,14 @@ contract HeroArenaAvatars is ERC721Enumerable, Ownable {
     // Mapping the avatarId for each tokenId
     mapping(uint256 => uint8) private _avatarIds;
 
-    // Mapping the name of avatars 
+    // Mapping the name of avatars
     mapping(uint8 => string) private _avatarNames;
 
-    // Mapping the timestamp of avatars 
+    // Mapping the timestamp of avatars
     mapping(uint8 => uint256) private _avatarCreatedTimestamps;
+
+    /// @notice Emitted when an avatar type's display metadata is configured.
+    event AvatarMetadataUpdated(uint8 indexed avatarId, string name, uint256 createdAt);
 
     constructor() ERC721("HA Avatars", "HAA") Ownable(msg.sender) {
 
@@ -37,8 +46,13 @@ contract HeroArenaAvatars is ERC721Enumerable, Ownable {
 
     /**
      * Mint a NFT, only the owner can call it.
+     * @dev Minting and burning are centralized to the owner role; the owner is
+     *      intended to be transferred to a multisig after deployment.
+     *      INVALID_AVATAR_ID is forbidden so the batch lookup sentinel cannot
+     *      collide with a real avatarId.
      */
     function mint(address _to, uint8 _avatarId) external onlyOwner returns (uint256) {
+        require(_avatarId != INVALID_AVATAR_ID, "Reserved avatarId");
         _tokenCounter += 1;
         uint256 _newTokenId = _tokenCounter;
         _avatarIds[_newTokenId] = _avatarId;
@@ -53,10 +67,13 @@ contract HeroArenaAvatars is ERC721Enumerable, Ownable {
     function setAvatarNameAndCreatedTimestamp(uint8 _avatarId, string calldata _avatarName) external onlyOwner {
         _avatarNames[_avatarId] = _avatarName;
         _avatarCreatedTimestamps[_avatarId] = block.timestamp;
+        emit AvatarMetadataUpdated(_avatarId, _avatarName, block.timestamp);
     }
 
     /**
      * Burn a NFT, only the owner can call it.
+     * @dev See the governance comment on mint(). The ERC721 Transfer(...to=0)
+     *      event emitted by _burn is the canonical record of burns.
      */
     function burn(uint256 _tokenId) external onlyOwner {
         uint8 _avatarId = _avatarIds[_tokenId];
@@ -67,12 +84,26 @@ contract HeroArenaAvatars is ERC721Enumerable, Ownable {
     }
 
     /**
+     * @notice Returns true if the given token currently exists (minted and not burned).
+     */
+    function tokenExists(uint256 _tokenId) external view returns (bool) {
+        return _ownerOf(_tokenId) != address(0);
+    }
+
+    /**
      * Get avatarIds for a group of specific tokenId.
+     * @dev Returns INVALID_AVATAR_ID (255) for tokenIds that do not exist or
+     *      have been burned. Callers MUST treat 255 as "no token" rather than
+     *      a real avatarId — the default mapping value 0 is itself a valid avatarId.
      */
     function getAvatarIdBatch(uint256[] calldata _tokenIds) external view returns (uint8[] memory) {
         uint8[] memory _Ids = new uint8[](_tokenIds.length);
         for (uint256 i = 0; i < _tokenIds.length; i++) {
-            _Ids[i] = _avatarIds[_tokenIds[i]];
+            if (_ownerOf(_tokenIds[i]) == address(0)) {
+                _Ids[i] = INVALID_AVATAR_ID;
+            } else {
+                _Ids[i] = _avatarIds[_tokenIds[i]];
+            }
         }
         return _Ids;
     }
@@ -82,7 +113,7 @@ contract HeroArenaAvatars is ERC721Enumerable, Ownable {
      */
     function getAvatarNameAndCreatedTimestampBatch(uint8[] calldata _Ids) external view returns (string[] memory, uint256[] memory) {
         require(_Ids.length < 1001, "Group size must be < 1001");
-        
+
         string[] memory _names = new string[](_Ids.length);
         uint256[] memory _timestamps = new uint256[](_Ids.length);
         for (uint256 i = 0; i < _Ids.length; i++) {

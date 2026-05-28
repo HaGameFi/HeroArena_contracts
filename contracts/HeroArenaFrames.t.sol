@@ -196,8 +196,11 @@ contract HeroArenaFramesTest is Test {
     function test_Burn_ClearsFrameIdMapping() public {
         uint256 tokenId = frames.mint(user1, 2);
         frames.burn(tokenId);
+        // Burned tokens report INVALID_FRAME_ID in the batch lookup so callers
+        // can distinguish "no token" from a real frameId 0.
         uint8[] memory result = frames.getFrameIdBatch(_tokenIds1(tokenId));
-        assertEq(result[0], 0);
+        assertEq(result[0], frames.INVALID_FRAME_ID());
+        assertFalse(frames.tokenExists(tokenId));
     }
 
     function test_Burn_MultipleBurns() public {

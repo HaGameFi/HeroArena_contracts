@@ -12,6 +12,15 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
  * @title HeroArenaProfile
  * @notice This is a contract for users to bind their address to
  * a customizable profile by choosing a team.
+ *
+ * @dev Avatar and frame NFT contracts are whitelisted by the owner via
+ *      addAvatarAddress / addFrameAddress. The whitelist is security-critical
+ *      because updateAvatar / updateFrame call ownerOf() and safeTransferFrom()
+ *      on those contracts; non-standard or malicious ERC721 implementations
+ *      can revert profile flows, mis-report ownership, or interfere with NFT
+ *      custody. Only approve collections that have been reviewed for ERC721
+ *      compliance and predictable transfer behavior. The supportsInterface
+ *      check in the add*Address admin functions is necessary but NOT sufficient.
  */
 contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
     using SafeERC20 for IERC20;
@@ -65,6 +74,19 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
     event UserPointIncrease(address indexed user, uint256 numberOfPoints, uint256 indexed campaignId);
     event UserPointIncreaseBatch(address[] users, uint256 numberOfPoints, uint256 indexed campaignId);
 
+    event TeamJoinableUpdated(uint256 indexed teamId, bool isJoinable);
+    event FeeClaimed(address indexed owner, uint256 amount);
+    event AvatarAddressAdded(address indexed avatarAddress);
+    event FrameAddressAdded(address indexed frameAddress);
+    event UserPointDecrease(address indexed user, uint256 numberOfPoints);
+    event UserPointDecreaseBatch(address[] users, uint256 numberOfPoints);
+    event TeamTotalPointDecrease(uint256 indexed teamId, uint256 numberOfPoints);
+
+    /// @notice Emitted when a user detaches their currently-assigned avatar
+    ///         or frame NFT without supplying a replacement.
+    event UserAvatarDetached(address indexed user, address avatarAddress, uint256 tokenId);
+    event UserFrameDetached(address indexed user, address frameAddress, uint256 frameTokenId);
+
     modifier onlyPoint() {
         require(hasRole(POINT_ROLE, msg.sender), "Not a point role");
         _;
@@ -80,7 +102,34 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
         feeToRegister = _feeToRegister;
         feeToUpdate = _feeToUpdate;
 
+        // _grantRole here is now redundant with the _transferOwnership override
+        // that fires from Ownable's constructor, but kept for explicitness — it
+        // is idempotent (already-granted role is a no-op for state semantics).
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+    }
+
+    /**
+     * @dev Keep Ownable and AccessControl authorities aligned. When the owner
+     *      changes (including renounceOwnership which transfers to address(0)),
+     *      grant DEFAULT_ADMIN_ROLE to the new owner and revoke it from the
+     *      previous owner. Without this, transferOwnership would leave the
+     *      original deployer with role-management power even after they're no
+     *      longer Ownable.owner().
+     *
+     *      Fires from Ownable's constructor too (previousOwner = address(0)),
+     *      so the initial DEFAULT_ADMIN_ROLE grant is handled here. The
+     *      _grantRole call in the constructor body is a redundant no-op kept
+     *      for documentation.
+     */
+    function _transferOwnership(address newOwner) internal override {
+        address previousOwner = owner();
+        super._transferOwnership(newOwner);
+        if (previousOwner != address(0) && previousOwner != newOwner) {
+            _revokeRole(DEFAULT_ADMIN_ROLE, previousOwner);
+        }
+        if (newOwner != address(0)) {
+            _grantRole(DEFAULT_ADMIN_ROLE, newOwner);
+        }
     }
 
     /**
@@ -147,6 +196,7 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
     function makeTeamJoinable(uint256 _teamId) external onlyOwner {
         require(_teamId > 0 && _teamId <= numberOfTeams, "TeamId invalid");
         _teamMapping[_teamId].isJoinable = true;
+        emit TeamJoinableUpdated(_teamId, true);
     }
 
     /**
@@ -155,6 +205,7 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
     function makeTeamNotJoinable(uint256 _teamId) external onlyOwner {
         require(_teamId > 0 && _teamId <= numberOfTeams, "TeamId invalid");
         _teamMapping[_teamId].isJoinable = false;
+        emit TeamJoinableUpdated(_teamId, false);
     }
 
     /**
@@ -162,6 +213,7 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
      */
     function claimFee(uint256 _amount) external onlyOwner {
         HapToken.safeTransfer(msg.sender, _amount);
+        emit FeeClaimed(msg.sender, _amount);
     }
 
     /**
@@ -177,11 +229,21 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
 
     /**
      * To create a user profile. It sends the HAP to this address.
+     * @param _teamId  Team to join.
+     * @param _maxFee  Maximum HAP the caller is willing to pay as registration
+     *                 fee. Pass `type(uint256).max` to opt out of slippage
+     *                 protection.
+     * @dev The owner can change `feeToRegister` at any time. Requiring a
+     *      user-supplied cap prevents an admin front-run from charging more
+     *      than the user intended at submission time.
      */
-    function createProfile(uint256 _teamId) external {
+    function createProfile(uint256 _teamId, uint256 _maxFee) external {
         require(!hasRegistered[msg.sender], "User is registered");
         require(_teamId > 0 && _teamId <= numberOfTeams, "TeamId invalid");
         require(_teamMapping[_teamId].isJoinable, "The team currently is not joinable");
+
+        uint256 _fee = feeToRegister;
+        require(_fee <= _maxFee, "Fee exceeds maximum");
 
         // Increment the _userCounter and get user's id
         _userCounter += 1;
@@ -208,7 +270,7 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
         _teamMapping[_teamId].numberOfUsers += 1;
 
         // Transfer HAP tokens to this contract
-        HapToken.safeTransferFrom(msg.sender, address(this), feeToRegister);
+        HapToken.safeTransferFrom(msg.sender, address(this), _fee);
 
         // emit event
         emit UserNew(msg.sender, _teamId);
@@ -216,11 +278,17 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
 
     /**
      * To update a user's avatar. It sends the HAP to this address.
+     * @param _maxFee Maximum HAP fee the caller is willing to pay. Pass
+     *                `type(uint256).max` to opt out of slippage protection.
+     * @dev See createProfile for the slippage rationale.
      */
-    function updateAvatar(address _avatarAddress, uint256 _tokenId) external {
+    function updateAvatar(address _avatarAddress, uint256 _tokenId, uint256 _maxFee) external {
         // Checks
         require(hasRegistered[msg.sender], "User not registered");
         require(hasRole(AVATAR_ROLE, _avatarAddress), "Avatar address invalid");
+
+        uint256 _fee = feeToUpdate;
+        require(_fee <= _maxFee, "Fee exceeds maximum");
 
         address _previousAvatarAddress = _userMapping[msg.sender].avatarAddress;
         uint256 _previousTokenId = _userMapping[msg.sender].tokenId;
@@ -234,7 +302,7 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
 
         // Interactions（后执行外部调用）
         _avatarToken.safeTransferFrom(msg.sender, address(this), _tokenId);
-        HapToken.safeTransferFrom(msg.sender, address(this), feeToUpdate);
+        HapToken.safeTransferFrom(msg.sender, address(this), _fee);
 
         if (_previousAvatarAddress != address(0)) {
             IERC721(_previousAvatarAddress).safeTransferFrom(address(this), msg.sender, _previousTokenId);
@@ -245,11 +313,17 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
 
     /**
      * To update a user's frame. It sends the HAP to this address.
+     * @param _maxFee Maximum HAP fee the caller is willing to pay. Pass
+     *                `type(uint256).max` to opt out of slippage protection.
+     * @dev See createProfile for the slippage rationale.
      */
-    function updateFrame(address _frameAddress, uint256 _frameTokenId) external {
+    function updateFrame(address _frameAddress, uint256 _frameTokenId, uint256 _maxFee) external {
         // Checks
         require(hasRegistered[msg.sender], "User not registered");
         require(hasRole(FRAME_ROLE, _frameAddress), "Frame address invalid");
+
+        uint256 _fee = feeToUpdate;
+        require(_fee <= _maxFee, "Fee exceeds maximum");
 
         address _previousFrameAddress = _userMapping[msg.sender].frameAddress;
         uint256 _previousFrameTokenId = _userMapping[msg.sender].frameTokenId;
@@ -263,7 +337,7 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
 
         // Interactions（后执行外部调用）
         _frameToken.safeTransferFrom(msg.sender, address(this), _frameTokenId);
-        HapToken.safeTransferFrom(msg.sender, address(this), feeToUpdate);
+        HapToken.safeTransferFrom(msg.sender, address(this), _fee);
 
         if (_previousFrameAddress != address(0)) {
             IERC721(_previousFrameAddress).safeTransferFrom(address(this), msg.sender, _previousFrameTokenId);
@@ -273,11 +347,58 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
     }
 
     /**
+     * @notice Detach (return) the user's currently-assigned avatar NFT without
+     *         supplying a replacement and without paying the update fee.
+     * @dev Returns the NFT to the user and clears the slot, without requiring
+     *      a replacement NFT or charging feeToUpdate. AVATAR_ROLE on the
+     *      previous address is NOT required so the user can still recover their
+     *      NFT even if the project later revokes the role from a stale
+     *      collection.
+     */
+    function detachAvatar() external {
+        require(hasRegistered[msg.sender], "User not registered");
+
+        address _previousAvatarAddress = _userMapping[msg.sender].avatarAddress;
+        uint256 _previousTokenId = _userMapping[msg.sender].tokenId;
+        require(_previousAvatarAddress != address(0), "No avatar attached");
+
+        // Effects first.
+        _userMapping[msg.sender].avatarAddress = address(0);
+        _userMapping[msg.sender].tokenId = 0;
+
+        IERC721(_previousAvatarAddress).safeTransferFrom(address(this), msg.sender, _previousTokenId);
+
+        emit UserAvatarDetached(msg.sender, _previousAvatarAddress, _previousTokenId);
+    }
+
+    /**
+     * @notice Detach (return) the user's currently-assigned frame NFT.
+     * @dev Companion to detachAvatar(). Same rationale.
+     */
+    function detachFrame() external {
+        require(hasRegistered[msg.sender], "User not registered");
+
+        address _previousFrameAddress = _userMapping[msg.sender].frameAddress;
+        uint256 _previousFrameTokenId = _userMapping[msg.sender].frameTokenId;
+        require(_previousFrameAddress != address(0), "No frame attached");
+
+        _userMapping[msg.sender].frameAddress = address(0);
+        _userMapping[msg.sender].frameTokenId = 0;
+
+        IERC721(_previousFrameAddress).safeTransferFrom(address(this), msg.sender, _previousFrameTokenId);
+
+        emit UserFrameDetached(msg.sender, _previousFrameAddress, _previousFrameTokenId);
+    }
+
+    /**
      * To add a avatar NFT address for users to set their profile.
+     * @dev AccessControl emits RoleGranted; we additionally emit a
+     *      domain-specific event for easier off-chain indexing.
      */
     function addAvatarAddress(address _avatarAddress) external onlyOwner {
         require(IERC721(_avatarAddress).supportsInterface(0x80ac58cd), "Not ERC721");
         _grantRole(AVATAR_ROLE, _avatarAddress);
+        emit AvatarAddressAdded(_avatarAddress);
     }
 
     /**
@@ -286,6 +407,7 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
     function addFrameAddress(address _frameAddress) external onlyOwner {
         require(IERC721(_frameAddress).supportsInterface(0x80ac58cd), "Not ERC721");
         _grantRole(FRAME_ROLE, _frameAddress);
+        emit FrameAddressAdded(_frameAddress);
     }
 
     /**
@@ -358,8 +480,9 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
      */
     function decreaseUserPoints(address _userAddress, uint256 _numberOfPoints) external onlyPoint {
         require(hasRegistered[_userAddress], "User not registered");
-        
+
         _userMapping[_userAddress].selfPoints -= _numberOfPoints;
+        emit UserPointDecrease(_userAddress, _numberOfPoints);
     }
 
     /**
@@ -373,6 +496,7 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
 
             _userMapping[_userAddresses[i]].selfPoints -= _numberOfPoints;
         }
+        emit UserPointDecreaseBatch(_userAddresses, _numberOfPoints);
     }
 
     /**
@@ -380,8 +504,9 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
      */
     function decreaseTeamPoints(uint256 _teamId, uint256 _numberOfPoints) external onlyPoint {
         require(_teamId > 0 && _teamId <= numberOfTeams, "TeamId invalid");
-        
+
         _teamMapping[_teamId].totalPoints -= _numberOfPoints;
+        emit TeamTotalPointDecrease(_teamId, _numberOfPoints);
     }
 
     /**

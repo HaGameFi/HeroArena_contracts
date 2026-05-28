@@ -196,8 +196,11 @@ contract HeroArenaAvatarsTest is Test {
     function test_Burn_ClearsAvatarIdMapping() public {
         uint256 tokenId = avatars.mint(user1, 3);
         avatars.burn(tokenId);
+        // Burned tokens report INVALID_AVATAR_ID in the batch lookup so callers
+        // can distinguish "no token" from a real avatarId 0.
         uint8[] memory result = avatars.getAvatarIdBatch(_tokenIds1(tokenId));
-        assertEq(result[0], 0);
+        assertEq(result[0], avatars.INVALID_AVATAR_ID());
+        assertFalse(avatars.tokenExists(tokenId));
     }
 
     function test_Burn_MultipleBurns() public {

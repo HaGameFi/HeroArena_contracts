@@ -5,6 +5,12 @@ import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
 contract HeroArenaFrames is ERC721Enumerable, Ownable {
+    /// @notice Reserved sentinel returned by getFrameIdBatch for tokenIds that do
+    ///         not exist or have been burned. frameId of `INVALID_FRAME_ID` can
+    ///         never be minted, so callers can distinguish a real frameId 0 from
+    ///         a missing token.
+    uint8 public constant INVALID_FRAME_ID = type(uint8).max;
+
     // Mapping the number of tokens for each frameId
     mapping(uint8 => uint256) public frameCount;
 
@@ -17,11 +23,14 @@ contract HeroArenaFrames is ERC721Enumerable, Ownable {
     // Mapping the frameId for each tokenId
     mapping(uint256 => uint8) private _frameIds;
 
-    // Mapping the name of frames 
+    // Mapping the name of frames
     mapping(uint8 => string) private _frameNames;
 
-    // Mapping the timestamp of frames 
+    // Mapping the timestamp of frames
     mapping(uint8 => uint256) private _frameCreatedTimestamps;
+
+    /// @notice Emitted when a frame type's display metadata is configured.
+    event FrameMetadataUpdated(uint8 indexed frameId, string name, uint256 createdAt);
 
     constructor() ERC721("HA Frames", "HAF") Ownable(msg.sender) {
 
@@ -37,8 +46,13 @@ contract HeroArenaFrames is ERC721Enumerable, Ownable {
 
     /**
      * Mint a NFT, only the owner can call it.
+     * @dev Minting and burning are centralized to the owner role; the owner is
+     *      intended to be transferred to a multisig after deployment.
+     *      INVALID_FRAME_ID is forbidden so the batch lookup sentinel cannot
+     *      collide with a real frameId.
      */
     function mint(address _to, uint8 _frameId) external onlyOwner returns (uint256) {
+        require(_frameId != INVALID_FRAME_ID, "Reserved frameId");
         _tokenCounter += 1;
         uint256 _newTokenId = _tokenCounter;
         _frameIds[_newTokenId] = _frameId;
@@ -53,10 +67,13 @@ contract HeroArenaFrames is ERC721Enumerable, Ownable {
     function setFrameNameAndCreatedTimestamp(uint8 _frameId, string calldata _frameName) external onlyOwner {
         _frameNames[_frameId] = _frameName;
         _frameCreatedTimestamps[_frameId] = block.timestamp;
+        emit FrameMetadataUpdated(_frameId, _frameName, block.timestamp);
     }
 
     /**
      * Burn a NFT, only the owner can call it.
+     * @dev See the governance comment on mint(). The ERC721 Transfer(...to=0)
+     *      event emitted by _burn is the canonical record of burns.
      */
     function burn(uint256 _tokenId) external onlyOwner {
         uint8 _frameId = _frameIds[_tokenId];
@@ -67,12 +84,26 @@ contract HeroArenaFrames is ERC721Enumerable, Ownable {
     }
 
     /**
+     * @notice Returns true if the given token currently exists (minted and not burned).
+     */
+    function tokenExists(uint256 _tokenId) external view returns (bool) {
+        return _ownerOf(_tokenId) != address(0);
+    }
+
+    /**
      * Get frameIds for a group of specific tokenId.
+     * @dev Returns INVALID_FRAME_ID (255) for tokenIds that do not exist or
+     *      have been burned. Callers MUST treat 255 as "no token" rather than
+     *      a real frameId — the default mapping value 0 is itself a valid frameId.
      */
     function getFrameIdBatch(uint256[] calldata _tokenIds) external view returns (uint8[] memory) {
         uint8[] memory _Ids = new uint8[](_tokenIds.length);
         for (uint256 i = 0; i < _tokenIds.length; i++) {
-            _Ids[i] = _frameIds[_tokenIds[i]];
+            if (_ownerOf(_tokenIds[i]) == address(0)) {
+                _Ids[i] = INVALID_FRAME_ID;
+            } else {
+                _Ids[i] = _frameIds[_tokenIds[i]];
+            }
         }
         return _Ids;
     }
@@ -82,7 +113,7 @@ contract HeroArenaFrames is ERC721Enumerable, Ownable {
      */
     function getFrameNameAndCreatedTimestampBatch(uint8[] calldata _Ids) external view returns (string[] memory, uint256[] memory) {
         require(_Ids.length < 1001, "Group size must be < 1001");
-        
+
         string[] memory _names = new string[](_Ids.length);
         uint256[] memory _timestamps = new uint256[](_Ids.length);
         for (uint256 i = 0; i < _Ids.length; i++) {

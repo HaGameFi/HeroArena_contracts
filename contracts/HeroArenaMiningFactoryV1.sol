@@ -9,7 +9,9 @@ import "./HeroArenaAvatars.sol";
 contract HeroArenaMiningFactoryV1 is Ownable {
     using SafeERC20 for IERC20;
 
-    IERC20 public HapToken;
+    /// @dev HapToken is set once in the constructor and never mutated;
+    ///      declared immutable for gas savings + safety against accidental writes.
+    IERC20 public immutable HapToken;
     HeroArenaAvatars public HeroArenaAvatarsSC;
 
     bool public availableClaim;
@@ -17,8 +19,10 @@ contract HeroArenaMiningFactoryV1 is Ownable {
     // Price of HAP that a user needs to pay to for a NFT
     uint256 public nftPrice;
 
-    // number of initial series (i.e. different visuals)
-    uint8 private numberOfAvatars;
+    /// @notice Number of initial avatar series (i.e. different visuals).
+    /// @dev Set once in the constructor and never modified; declared immutable
+    ///      so it stays in code rather than storage.
+    uint8 private immutable numberOfAvatars;
 
     // Pending owner for two-step NFT contract ownership transfer
     address public pendingNFTContractOwner;
@@ -28,8 +32,14 @@ contract HeroArenaMiningFactoryV1 is Ownable {
     event AvatarPriceUpdated(uint256 newPrice);
     event NFTContractOwnershipProposed(address indexed previousOwner, address indexed pendingOwner);
     event NFTContractOwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    /// @notice Emitted when accumulated HAP is withdrawn by the owner.
+    event FeeClaimed(address indexed owner, uint256 amount);
 
     constructor(IERC20 _HapToken, uint256 _price) Ownable(msg.sender) {
+        // Reject the zero address so a misconfigured deployment cannot leave
+        // the factory pointing at a non-token, which would make every mintNFT()
+        // call revert in an opaque way.
+        require(address(_HapToken) != address(0), "HapToken cannot be zero");
         HapToken = _HapToken;
         nftPrice = _price;
         HeroArenaAvatarsSC = new HeroArenaAvatars();
@@ -127,6 +137,27 @@ contract HeroArenaMiningFactoryV1 is Ownable {
 
         // Other parameters initialized
         numberOfAvatars = 90;
+
+        // Transfer of MiningFactory ownership clears pendingNFTContractOwner via
+        // the _transferOwnership override below.
+    }
+
+    /**
+     * @dev When the factory owner changes, any pending NFT-contract ownership
+     *      proposal made by the old owner must not survive into the new owner's
+     *      authority. We clear it on every ownership transition, including the
+     *      constructor (initial transfer from address(0) to deployer), where
+     *      there is nothing to clear yet.
+     */
+    function _transferOwnership(address newOwner) internal override {
+        if (pendingNFTContractOwner != address(0)) {
+            address staleProposer = address(HeroArenaAvatarsSC) == address(0)
+                ? address(0)
+                : HeroArenaAvatarsSC.owner();
+            emit NFTContractOwnershipProposed(staleProposer, address(0));
+            pendingNFTContractOwner = address(0);
+        }
+        super._transferOwnership(newOwner);
     }
 
     /**
@@ -141,13 +172,22 @@ contract HeroArenaMiningFactoryV1 is Ownable {
 
     /**
      * Mint NFTs from the HeroArenaAvatars contract.
+     * @param _avatarId Avatar series ID.
+     * @param _maxPrice Maximum HAP price the caller is willing to pay. Pass
+     *                  `type(uint256).max` to opt out of slippage protection.
+     * @dev The owner can change `nftPrice` at any time. Requiring a user-side
+     *      cap prevents a front-run price bump from consuming the user's
+     *      allowance at a higher rate than they intended.
      */
-    function mintNFT(uint8 _avatarId) external {
+    function mintNFT(uint8 _avatarId, uint256 _maxPrice) external {
         require(availableClaim, "Cannot claim");
         require(_avatarId < numberOfAvatars, "Input avatarId unavailable");
 
+        uint256 _price = nftPrice;
+        require(_price <= _maxPrice, "Price exceeds maximum");
+
         // Transfer HAP tokens to this contract
-        HapToken.safeTransferFrom(msg.sender, address(this), nftPrice);
+        HapToken.safeTransferFrom(msg.sender, address(this), _price);
 
         uint256 _tokenId = HeroArenaAvatarsSC.mint(msg.sender, _avatarId);
 
@@ -168,11 +208,24 @@ contract HeroArenaMiningFactoryV1 is Ownable {
     /**
      * Step 1: Propose a new owner for the NFT contract, only the owner can call it.
      * The proposed owner must call acceptNFTContractOwnership() to complete the transfer.
-     * Call with address(0) to cancel a pending proposal.
+     * @dev Reject the zero address. Use cancelNFTContractOwnership() for
+     *      explicit cancellation so the intent is unambiguous.
      */
     function proposeNFTContractOwnership(address _newOwner) external onlyOwner {
+        require(_newOwner != address(0), "New owner cannot be zero");
         pendingNFTContractOwner = _newOwner;
         emit NFTContractOwnershipProposed(HeroArenaAvatarsSC.owner(), _newOwner);
+    }
+
+    /**
+     * @notice Cancel any pending NFT-contract ownership proposal.
+     * @dev    Required because proposeNFTContractOwnership() rejects
+     *         address(0); this is the explicit cancellation entry point.
+     */
+    function cancelNFTContractOwnership() external onlyOwner {
+        require(pendingNFTContractOwner != address(0), "No pending proposal");
+        emit NFTContractOwnershipProposed(HeroArenaAvatarsSC.owner(), address(0));
+        pendingNFTContractOwner = address(0);
     }
 
     /**
@@ -188,9 +241,12 @@ contract HeroArenaMiningFactoryV1 is Ownable {
 
     /**
      * Transfer the HAP tokens back to the owner.
+     * @dev Emits FeeClaimed so off-chain analytics can track admin withdrawals
+     *      without parsing raw ERC20 transfer logs.
      */
     function claimFee(uint256 _amount) external onlyOwner {
         // Transfer HAP tokens to owner
         HapToken.safeTransfer(msg.sender, _amount);
+        emit FeeClaimed(msg.sender, _amount);
     }
 }   

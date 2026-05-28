@@ -7,6 +7,23 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "./HeroArenaChallenges.sol";
 import "./HeroArenaProfile.sol";
 
+/**
+ * @title HeroArenaMeetTheCouncil
+ * @notice Operator-driven submission flow that records PvE level completions
+ *         in HeroArenaChallenges and credits the reward points to the user's
+ *         profile in HeroArenaProfile.
+ *
+ * @dev Cross-contract role wiring required before this contract is operational:
+ *      1. HeroArenaChallenges must grant CHALLENGE_ADMIN_ROLE to this council
+ *         contract (so submit() / setLevelNameAndRewardPoints() succeed).
+ *      2. HeroArenaProfile must grant POINT_ROLE to this council contract
+ *         (so increaseUserPoints() succeeds).
+ *      3. This contract must grant OPERATOR_ROLE to the backend operator
+ *         address that will call submitLv().
+ *      Step 1 must complete before initLevels() is called. The deployment
+ *      script is responsible for performing these atomically and verifying
+ *      them before the contract is considered ready.
+ */
 contract HeroArenaMeetTheCouncil is AccessControl, Ownable {
 
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
@@ -28,15 +45,45 @@ contract HeroArenaMeetTheCouncil is AccessControl, Ownable {
     }
 
     constructor(HeroArenaChallenges _HeroArenaChallengesSC, HeroArenaProfile _HeroArenaProfileSC) Ownable(msg.sender) {
+        require(address(_HeroArenaChallengesSC) != address(0), "Challenges cannot be zero");
+        require(address(_HeroArenaProfileSC)    != address(0), "Profile cannot be zero");
         HeroArenaChallengesSC = _HeroArenaChallengesSC;
         HeroArenaProfileSC = _HeroArenaProfileSC;
 
+        // _grantRole here is now redundant with the _transferOwnership override
+        // that fires from Ownable's constructor, but kept for explicitness — it
+        // is idempotent.
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
     }
 
     /**
-     * Initialize level names and points. Must be called after HeroArenaChallenges
-     * ownership has been transferred to this contract.
+     * @dev Keep Ownable and AccessControl authorities aligned. When the owner
+     *      changes (including renounceOwnership which transfers to address(0)),
+     *      grant DEFAULT_ADMIN_ROLE to the new owner and revoke it from the
+     *      previous owner. Without this, transferOwnership would leave the
+     *      original deployer able to administer OPERATOR_ROLE even after they
+     *      are no longer Ownable.owner().
+     *
+     *      Fires from Ownable's constructor too (previousOwner = address(0)),
+     *      so the initial DEFAULT_ADMIN_ROLE grant is handled here.
+     */
+    function _transferOwnership(address newOwner) internal override {
+        address previousOwner = owner();
+        super._transferOwnership(newOwner);
+        if (previousOwner != address(0) && previousOwner != newOwner) {
+            _revokeRole(DEFAULT_ADMIN_ROLE, previousOwner);
+        }
+        if (newOwner != address(0)) {
+            _grantRole(DEFAULT_ADMIN_ROLE, newOwner);
+        }
+    }
+
+    /**
+     * @notice Initialize level names and reward points. Must be called once,
+     *         after this contract has been granted CHALLENGE_ADMIN_ROLE on
+     *         HeroArenaChallenges. (HeroArenaChallenges itself is governed by
+     *         CHALLENGE_ADMIN_ROLE, not Ownable, so no ownership transfer is
+     *         needed — only the role grant.)
      */
     function initLevels() external onlyOwner {
         require(submitMaxLevelId == 0, "Already initialized");

@@ -5,7 +5,7 @@ export default buildModule("HeroArenaMeetTheCouncilModule", (m) => {
 
   m.call(pve, "updateAvailableSubmit", [true]);
 
-  //m.call(pve, "initLevels", []); // 不能直接调用，需要先将此合约提升为CHALLENGE_ADMIN_ROLE
+  //m.call(pve, "initLevels", []); 
 
   return { pve };
 });

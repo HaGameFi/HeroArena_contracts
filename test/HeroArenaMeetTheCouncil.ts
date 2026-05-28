@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { network } from "hardhat";
-import { keccak256, toBytes, zeroAddress } from "viem";
+import { keccak256, toBytes, zeroAddress, maxUint256 } from "viem";
 
 const OPERATOR_ROLE        = keccak256(toBytes("OPERATOR_ROLE"));
 const POINT_ROLE           = keccak256(toBytes("POINT_ROLE"));
@@ -47,7 +47,7 @@ describe("HeroArenaMeetTheCouncil", async function () {
 
     // Register user1 in profile
     await profile.write.addTeam(["Council", "The Council team"]);
-    await profile.write.createProfile([1n], { account: user1Client.account });
+    await profile.write.createProfile([1n, maxUint256], { account: user1Client.account });
 
     return { hapToken, profile, challenges, council };
   }
@@ -257,6 +257,109 @@ describe("HeroArenaMeetTheCouncil", async function () {
       const { council } = await deployAll();
       await assert.rejects(
         council.write.grantRole([OPERATOR_ROLE, stranger], { account: strangerClient.account }),
+      );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // MC: constructor zero-address validation
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("MC: constructor input validation", async function () {
+    it("reverts when Challenges address is zero", async function () {
+      const hapToken = await viem.deployContract("MockERC20");
+      const profile  = await viem.deployContract("HeroArenaProfile", [hapToken.address, 0n, 0n]);
+      await assert.rejects(
+        viem.deployContract("HeroArenaMeetTheCouncil", [zeroAddress, profile.address]),
+      );
+    });
+
+    it("reverts when Profile address is zero", async function () {
+      const challenges = await viem.deployContract("HeroArenaChallenges");
+      await assert.rejects(
+        viem.deployContract("HeroArenaMeetTheCouncil", [challenges.address, zeroAddress]),
+      );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ORD: Ownable + AccessControl stay synchronized
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("ORD: ownership-role sync", async function () {
+    it("transferOwnership grants DEFAULT_ADMIN_ROLE to the new owner", async function () {
+      const { council } = await deployAll();
+      const adminRole = await council.read.DEFAULT_ADMIN_ROLE();
+      await council.write.transferOwnership([user1]);
+      assert.equal(await council.read.hasRole([adminRole, user1]), true);
+    });
+
+    it("transferOwnership revokes DEFAULT_ADMIN_ROLE from the previous owner", async function () {
+      const { council } = await deployAll();
+      const adminRole = await council.read.DEFAULT_ADMIN_ROLE();
+      await council.write.transferOwnership([user1]);
+      assert.equal(await council.read.hasRole([adminRole, owner]), false);
+    });
+
+    it("new owner can manage OPERATOR_ROLE after transfer", async function () {
+      const { council } = await deployAll();
+      await council.write.transferOwnership([user1]);
+      const hash = await council.write.revokeRole(
+        [OPERATOR_ROLE, operator],
+        { account: user1Client.account },
+      );
+      const receipt = await publicClient.getTransactionReceipt({ hash });
+      assert.equal(receipt.status, "success");
+    });
+
+    it("previous owner can no longer manage OPERATOR_ROLE after transfer", async function () {
+      const { council } = await deployAll();
+      await council.write.transferOwnership([user1]);
+      await assert.rejects(
+        council.write.grantRole([OPERATOR_ROLE, stranger]),
+        /AccessControlUnauthorizedAccount/,
+      );
+    });
+
+    it("renounceOwnership revokes admin role from the deployer", async function () {
+      const { council } = await deployAll();
+      const adminRole = await council.read.DEFAULT_ADMIN_ROLE();
+      await council.write.renounceOwnership();
+      assert.equal(await council.read.hasRole([adminRole, owner]), false);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CRM: initLevels works with role grant alone (no ownership transfer needed)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("CRM: initLevels uses CHALLENGE_ADMIN_ROLE (no ownership transfer)", async function () {
+    it("initLevels succeeds with role grant — Challenges has no Ownable", async function () {
+      const hapToken   = await viem.deployContract("MockERC20");
+      const profile    = await viem.deployContract("HeroArenaProfile", [hapToken.address, 0n, 0n]);
+      const challenges = await viem.deployContract("HeroArenaChallenges");
+      const council    = await viem.deployContract("HeroArenaMeetTheCouncil", [
+        challenges.address, profile.address,
+      ]);
+      // Only role grant — no ownership transfer, because HeroArenaChallenges
+      // is gated by CHALLENGE_ADMIN_ROLE, not Ownable.
+      await challenges.write.grantRole([CHALLENGE_ADMIN_ROLE, council.address]);
+      await council.write.initLevels();
+      assert.equal(await council.read.submitMaxLevelId(), 6);
+    });
+
+    it("initLevels reverts without CHALLENGE_ADMIN_ROLE on Challenges", async function () {
+      const hapToken   = await viem.deployContract("MockERC20");
+      const profile    = await viem.deployContract("HeroArenaProfile", [hapToken.address, 0n, 0n]);
+      const challenges = await viem.deployContract("HeroArenaChallenges");
+      const council    = await viem.deployContract("HeroArenaMeetTheCouncil", [
+        challenges.address, profile.address,
+      ]);
+      // Skip the role grant intentionally → initLevels must revert when it
+      // tries to call setLevelNameAndRewardPoints on Challenges.
+      await assert.rejects(
+        council.write.initLevels(),
+        /Not a challenge admin role/,
       );
     });
   });

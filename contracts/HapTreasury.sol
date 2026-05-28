@@ -168,10 +168,17 @@ contract HapTreasury is AccessControl, ReentrancyGuard, Pausable {
     function receiveFunds(address token, uint256 amount, string calldata source) external nonReentrant whenNotPaused {
         if (amount == 0) revert InvalidAmount();
 
+        // Fee-on-transfer / rebasing tokens (USDT-with-fee, PAXG, stETH, etc.) can
+        // deliver less than `amount`. Credit only what actually arrived so
+        // totalReceived[token] tracks real inflow, not the requested amount.
+        uint256 balBefore = IERC20(token).balanceOf(address(this));
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
-        totalReceived[token] += amount;
+        uint256 received = IERC20(token).balanceOf(address(this)) - balBefore;
+        if (received == 0) revert InvalidAmount();
 
-        emit FundsReceived(token, msg.sender, amount, source);
+        totalReceived[token] += received;
+
+        emit FundsReceived(token, msg.sender, received, source);
     }
 
     /**
@@ -185,8 +192,10 @@ contract HapTreasury is AccessControl, ReentrancyGuard, Pausable {
         emit FundsReceived(address(0), msg.sender, msg.value, source);
     }
 
-    /// @notice Fallback receive (allows EOA to transfer BNB directly)
-    receive() external payable {
+    /// @notice Fallback receive (allows EOA to transfer BNB directly).
+    /// @dev    Guarded with whenNotPaused so direct native transfers cannot
+    ///         bypass the emergency pause and mutate totalReceived.
+    receive() external payable whenNotPaused {
         if (msg.value > 0) {
             totalReceived[address(0)] += msg.value;
             emit FundsReceived(address(0), msg.sender, msg.value, "DIRECT_TRANSFER");

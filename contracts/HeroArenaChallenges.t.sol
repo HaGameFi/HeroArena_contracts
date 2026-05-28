@@ -56,8 +56,12 @@ contract HeroArenaChallengesTest is Test {
         assertTrue(challenges.hasRole(challenges.DEFAULT_ADMIN_ROLE(), admin));
     }
 
-    function test_Constructor_DeployerIsNotChallengeAdminByDefault() public view {
-        assertFalse(challenges.hasRole(CHALLENGE_ADMIN_ROLE, admin));
+    function test_Constructor_DeployerIsChallengeAdminByDefault() public view {
+        // The deployer is bootstrapped with CHALLENGE_ADMIN_ROLE so the contract
+        // is operational without a separate post-deploy grant. The deployer is
+        // expected to grant the role to its real consumer (the council) and
+        // optionally renounce its own.
+        assertTrue(challenges.hasRole(CHALLENGE_ADMIN_ROLE, admin));
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -86,8 +90,12 @@ contract HeroArenaChallengesTest is Test {
         challenges.setLevelNameAndRewardPoints(0, "Hack", 9999);
     }
 
-    function test_SetLevel_AdminRoleAloneCannotSet() public {
-        // DEFAULT_ADMIN_ROLE does not imply CHALLENGE_ADMIN_ROLE
+    function test_SetLevel_DefaultAdminWithoutChallengeRoleCannotSet() public {
+        // DEFAULT_ADMIN_ROLE does not imply CHALLENGE_ADMIN_ROLE.
+        // Use a fresh account that only holds DEFAULT_ADMIN_ROLE to verify.
+        address bystander = makeAddr("bystander");
+        challenges.grantRole(challenges.DEFAULT_ADMIN_ROLE(), bystander);
+        vm.prank(bystander);
         vm.expectRevert("Not a challenge admin role");
         challenges.setLevelNameAndRewardPoints(2, "New Level", 20);
     }

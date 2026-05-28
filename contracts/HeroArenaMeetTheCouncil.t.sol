@@ -54,7 +54,7 @@ contract HeroArenaMeetTheCouncilTest is Test {
         // Register user1 in profile (required for increaseUserPoints)
         profile.addTeam("Council", "The Council team");
         vm.prank(user1);
-        profile.createProfile(1);
+        profile.createProfile(1, type(uint256).max);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -165,7 +165,7 @@ contract HeroArenaMeetTheCouncilTest is Test {
     function test_SubmitLv_AllLevelIds() public {
         // Register user2 as well
         vm.prank(user2);
-        profile.createProfile(1);
+        profile.createProfile(1, type(uint256).max);
 
         for (uint8 lvId = 0; lvId <= 6; lvId++) {
             vm.prank(operator);

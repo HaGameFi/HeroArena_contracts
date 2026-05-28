@@ -31,9 +31,9 @@ describe("HeroArenaBattle", async function () {
     const bonusToken = await viem.deployContract("MockERC20");
 
     await profile.write.addTeam(["Warriors", "Warriors team"]);
-    await profile.write.createProfile([1n], { account: user1Client.account });
-    await profile.write.createProfile([1n], { account: user2Client.account });
-    await profile.write.createProfile([1n], { account: user3Client.account });
+    await profile.write.createProfile([1n, maxUint256], { account: user1Client.account });
+    await profile.write.createProfile([1n, maxUint256], { account: user2Client.account });
+    await profile.write.createProfile([1n, maxUint256], { account: user3Client.account });
 
     const battle = await viem.deployContract("HeroArenaBattle", [profile.address]);
     await battle.write.grantRole([LIQUIDATOR_ROLE, liquidator]);
@@ -1148,6 +1148,317 @@ describe("HeroArenaBattle", async function () {
       assert.equal(await fot.read.balanceOf([battle.address]), contractBefore);
       assert.equal(await battle.read.outstandingBets([fot.address]), outstandBefore);
       assert.equal(await battle.read.getBattleCount(), countBefore);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // STI — bonus must not consume balance reserved for other battles
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("STI: bonus skip when reserved balance is insufficient", async function () {
+    it("bonus is skipped when bonusToken == betToken and pool is fully reserved", async function () {
+      const d = await deployWithERC20();
+      // Make sure user3 has tokens + approval so they can join battle 2.
+      await d.betToken.write.mint([user3, parseEther("10000")]);
+      await d.betToken.write.approve(
+        [d.battle.address, maxUint256],
+        { account: user3Client.account },
+      );
+
+      // Two parallel battles, same bet token.
+      await d.battle.write.createBattle(
+        [d.betToken.address, BET_AMOUNT, zeroAddress],
+        { account: user1Client.account },
+      );
+      await d.battle.write.joinExistBattle([1n], { account: user2Client.account });
+
+      await d.battle.write.createBattle(
+        [d.betToken.address, BET_AMOUNT, zeroAddress],
+        { account: user2Client.account },
+      );
+      await d.battle.write.joinExistBattle([2n], { account: user3Client.account });
+
+      // Bonus token == bet token. No separate deposit — the only balance on hand
+      // is the locked stakes of the two battles.
+      await d.battle.write.updateBonusToken([d.betToken.address, BONUS_AMOUNT]);
+
+      const winnerBefore = await d.betToken.read.balanceOf([user1]);
+      await d.battle.write.settleBattle([1n, user1], { account: liquidatorClient.account });
+
+      // Winner got main reward only (no bonus on top, because paying the bonus
+      // would have dipped into battle 2's locked stake).
+      assert.equal(
+        await d.betToken.read.balanceOf([user1]),
+        winnerBefore + BET_AMOUNT * 2n,
+      );
+      // Battle 2's stake is still fully covered by contract balance.
+      assert.equal(
+        await d.betToken.read.balanceOf([d.battle.address]),
+        await d.battle.read.outstandingBets([d.betToken.address]),
+      );
+      assert.equal(
+        await d.battle.read.outstandingBets([d.betToken.address]),
+        BET_AMOUNT * 2n,
+      );
+    });
+
+    it("bonus IS paid when a separate reserve covers it (sanity)", async function () {
+      const d = await deployWithERC20();
+      await d.battle.write.createBattle(
+        [d.betToken.address, BET_AMOUNT, zeroAddress],
+        { account: user1Client.account },
+      );
+      await d.battle.write.joinExistBattle([1n], { account: user2Client.account });
+
+      // Deposit BONUS_AMOUNT of the SAME bet token as an extra reserve.
+      await d.betToken.write.mint([owner, BONUS_AMOUNT]);
+      await d.betToken.write.approve([d.battle.address, maxUint256]);
+      await d.battle.write.depositToken([d.betToken.address, BONUS_AMOUNT]);
+
+      await d.battle.write.updateBonusToken([d.betToken.address, BONUS_AMOUNT]);
+
+      const before = await d.betToken.read.balanceOf([user1]);
+      await d.battle.write.settleBattle([1n, user1], { account: liquidatorClient.account });
+      assert.equal(
+        await d.betToken.read.balanceOf([user1]),
+        before + BET_AMOUNT * 2n + BONUS_AMOUNT,
+      );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TCR — malformed token return data must not revert settlement
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("TCR: malformed token return data", async function () {
+    it("settlement completes when bonus token returns 64 bytes of junk", async function () {
+      const d = await startNativeBattle();
+      const malf = await viem.deployContract("MockMalformedReturnERC20");
+      await malf.write.mint([d.battle.address, BONUS_AMOUNT]);
+      await d.battle.write.updateBonusToken([malf.address, BONUS_AMOUNT]);
+
+      const winnerBefore = await publicClient.getBalance({ address: user1 });
+      // MUST NOT revert — the bonus token's malformed return value must not
+      // tear down the entire settlement transaction.
+      await d.battle.write.settleBattle([1n, user1], { account: liquidatorClient.account });
+
+      // Main reward delivered, battle finalized.
+      assert.equal(
+        await publicClient.getBalance({ address: user1 }),
+        winnerBefore + BET_AMOUNT * 2n,
+      );
+      assert.equal((await d.battle.read.getBattleInfo([1n])).isEnded, true);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ZBB — zero-bet battles must not trigger bonus payouts
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("ZBB: zero-bet battles", async function () {
+    it("no bonus is paid when minBet is 0 and a battle is created with bet=0", async function () {
+      const d = await deploy();
+      await d.battle.write.updateAvailableCreateBattle([true]);
+      await d.battle.write.updateAllowedBetToken([d.betToken.address, true]);
+      // Allow zero ERC20 bets.
+      await d.battle.write.updateMinimumBetTokenAmount([0n, 0n]);
+
+      await d.bonusToken.write.mint([d.battle.address, BONUS_AMOUNT]);
+      await d.battle.write.updateBonusToken([d.bonusToken.address, BONUS_AMOUNT]);
+
+      await d.battle.write.createBattle(
+        [d.betToken.address, 0n, zeroAddress],
+        { account: user1Client.account },
+      );
+      await d.battle.write.joinExistBattle([1n], { account: user2Client.account });
+
+      // Settle must succeed (no main reward to pay because bet=0).
+      await d.battle.write.settleBattle([1n, user1], { account: liquidatorClient.account });
+
+      // The bonus pool is untouched — winner did not earn the bonus.
+      assert.equal(await d.bonusToken.read.balanceOf([user1]), 0n);
+      assert.equal(await d.bonusToken.read.balanceOf([d.battle.address]), BONUS_AMOUNT);
+    });
+
+    it("bonus IS paid when bet > 0 (regression for the ZBB gate)", async function () {
+      const d = await deployWithERC20();
+      await d.bonusToken.write.mint([d.battle.address, BONUS_AMOUNT]);
+      await d.battle.write.updateBonusToken([d.bonusToken.address, BONUS_AMOUNT]);
+
+      await d.battle.write.createBattle(
+        [d.betToken.address, BET_AMOUNT, zeroAddress],
+        { account: user1Client.account },
+      );
+      await d.battle.write.joinExistBattle([1n], { account: user2Client.account });
+      await d.battle.write.settleBattle([1n, user1], { account: liquidatorClient.account });
+
+      assert.equal(await d.bonusToken.read.balanceOf([user1]), BONUS_AMOUNT);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // RWP — pull-payment fallback + claimPayout
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("RWP: pull-payment fallback", async function () {
+    /// Deploy a battle environment using HapToken as the bet token, so we can
+    /// blacklist a player and force the push to revert from inside the token.
+    async function deployWithHapBet() {
+      const d = await deploy();
+      const hap = await viem.deployContract("HapToken", [owner]);
+      await hap.write.transfer([user1, parseEther("10000")]);
+      await hap.write.transfer([user2, parseEther("10000")]);
+      await hap.write.approve(
+        [d.battle.address, maxUint256],
+        { account: user1Client.account },
+      );
+      await hap.write.approve(
+        [d.battle.address, maxUint256],
+        { account: user2Client.account },
+      );
+      await d.battle.write.updateAvailableCreateBattle([true]);
+      await d.battle.write.updateAllowedBetToken([hap.address, true]);
+      await d.battle.write.updateMinimumBetTokenAmount([0n, 1n]);
+      return { ...d, hap };
+    }
+
+    async function startedHapBattle() {
+      const d = await deployWithHapBet();
+      await d.battle.write.createBattle(
+        [d.hap.address, BET_AMOUNT, zeroAddress],
+        { account: user1Client.account },
+      );
+      await d.battle.write.joinExistBattle([1n], { account: user2Client.account });
+      return { ...d, battleId: 1n };
+    }
+
+    it("settleBattle does NOT revert when winner is blacklisted on the bet token", async function () {
+      const d = await startedHapBattle();
+      await d.hap.write.blacklist([user1]);
+
+      // MUST NOT revert.
+      await d.battle.write.settleBattle(
+        [d.battleId, user1],
+        { account: liquidatorClient.account },
+      );
+
+      // Battle ended cleanly.
+      assert.equal((await d.battle.read.getBattleInfo([d.battleId])).isEnded, true);
+      // The push failed — user1 did not receive the payout directly.
+      assert.equal(await d.hap.read.balanceOf([user1]), parseEther("10000") - BET_AMOUNT);
+      // The reward is credited to pendingPayouts instead.
+      assert.equal(
+        await d.battle.read.pendingPayouts([d.hap.address, user1]),
+        BET_AMOUNT * 2n,
+      );
+      // And tracked under reserved so rescue can't touch it.
+      assert.equal(
+        await d.battle.read.reservedPendingPayouts([d.hap.address]),
+        BET_AMOUNT * 2n,
+      );
+    });
+
+    it("winner can claim payout after being unblacklisted", async function () {
+      const d = await startedHapBattle();
+      await d.hap.write.blacklist([user1]);
+      await d.battle.write.settleBattle(
+        [d.battleId, user1],
+        { account: liquidatorClient.account },
+      );
+
+      await d.hap.write.unblacklist([user1]);
+
+      const before = await d.hap.read.balanceOf([user1]);
+      await d.battle.write.claimPayout(
+        [d.hap.address],
+        { account: user1Client.account },
+      );
+      assert.equal(
+        await d.hap.read.balanceOf([user1]) - before,
+        BET_AMOUNT * 2n,
+      );
+
+      // pendingPayouts and the reservation drop back to zero.
+      assert.equal(
+        await d.battle.read.pendingPayouts([d.hap.address, user1]),
+        0n,
+      );
+      assert.equal(
+        await d.battle.read.reservedPendingPayouts([d.hap.address]),
+        0n,
+      );
+    });
+
+    it("claimPayout reverts when there is nothing to claim", async function () {
+      const { battle } = await deploy();
+      await assert.rejects(
+        battle.write.claimPayout(
+          [zeroAddress],
+          { account: user1Client.account },
+        ),
+        /Nothing to claim/,
+      );
+    });
+
+    it("rescueExtraTokens cannot drain pending-payout reserve", async function () {
+      const d = await startedHapBattle();
+      await d.hap.write.blacklist([user1]);
+      await d.battle.write.settleBattle(
+        [d.battleId, user1],
+        { account: liquidatorClient.account },
+      );
+
+      // Whole contract balance is now reserved for user1's pending payout.
+      await assert.rejects(
+        d.battle.write.rescueExtraTokens([d.hap.address, stranger, 1n]),
+        /Amount exceeds rescuable balance/,
+      );
+    });
+
+    it("closeBattle falls back to pendingPayouts when the creator is blacklisted", async function () {
+      const d = await deployWithHapBet();
+      await d.battle.write.createBattle(
+        [d.hap.address, BET_AMOUNT, zeroAddress],
+        { account: user1Client.account },
+      );
+      // Creator user1 gets blacklisted before close.
+      await d.hap.write.blacklist([user1]);
+
+      // closeBattle MUST still succeed — the refund goes to pendingPayouts.
+      await d.battle.write.closeBattle(
+        [1n],
+        { account: liquidatorClient.account },
+      );
+
+      assert.equal((await d.battle.read.getBattleInfo([1n])).isEnded, true);
+      assert.equal(
+        await d.battle.read.pendingPayouts([d.hap.address, user1]),
+        BET_AMOUNT,
+      );
+    });
+
+    it("subsequent claim succeeds for a refunded creator after unblacklist", async function () {
+      const d = await deployWithHapBet();
+      await d.battle.write.createBattle(
+        [d.hap.address, BET_AMOUNT, zeroAddress],
+        { account: user1Client.account },
+      );
+      await d.hap.write.blacklist([user1]);
+      await d.battle.write.closeBattle(
+        [1n],
+        { account: liquidatorClient.account },
+      );
+      await d.hap.write.unblacklist([user1]);
+
+      const before = await d.hap.read.balanceOf([user1]);
+      await d.battle.write.claimPayout(
+        [d.hap.address],
+        { account: user1Client.account },
+      );
+      assert.equal(
+        await d.hap.read.balanceOf([user1]) - before,
+        BET_AMOUNT,
+      );
     });
   });
 });

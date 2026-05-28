@@ -178,12 +178,15 @@ describe("HeroArenaFrames", async function () {
       await assert.rejects(frames.read.ownerOf([1n]));
     });
 
-    it("clears frameId mapping after burn", async function () {
+    it("clears frameId mapping after burn (AAI fix: returns sentinel)", async function () {
       const { frames } = await deploy();
       await frames.write.mint([user1, 2]);
       await frames.write.burn([1n]);
+      // AAI fix: burned tokens now report INVALID_FRAME_ID instead of 0, so
+      // callers cannot confuse a burned token with a real frameId 0.
       const result = await frames.read.getFrameIdBatch([[1n]]);
-      assert.equal(result[0], 0);
+      assert.equal(result[0], await frames.read.INVALID_FRAME_ID());
+      assert.equal(await frames.read.tokenExists([1n]), false);
     });
 
     it("reverts if not owner", async function () {
@@ -298,6 +301,70 @@ describe("HeroArenaFrames", async function () {
       await frames.write.transferFrom([user1, user2, 1n], { account: user1Client.account });
       assert.equal((await frames.read.getTokensByOwner([user1])).length, 0);
       assert.equal((await frames.read.getTokensByOwner([user2])).length, 1);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // AAI: getFrameIdBatch returns INVALID_FRAME_ID for missing tokens
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("AAI: invalid-token sentinel in batch", async function () {
+    it("returns INVALID_FRAME_ID for never-minted tokenId", async function () {
+      const { frames } = await deploy();
+      const sentinel = await frames.read.INVALID_FRAME_ID();
+      const result = await frames.read.getFrameIdBatch([[999n]]);
+      assert.equal(result[0], sentinel);
+    });
+
+    it("returns INVALID_FRAME_ID for burned tokenId", async function () {
+      const { frames } = await deploy();
+      const sentinel = await frames.read.INVALID_FRAME_ID();
+      await frames.write.mint([user1, 0]);
+      await frames.write.burn([1n]);
+      const result = await frames.read.getFrameIdBatch([[1n]]);
+      assert.equal(result[0], sentinel);
+    });
+
+    it("distinguishes frameId 0 (real) from missing token (sentinel)", async function () {
+      const { frames } = await deploy();
+      const sentinel = await frames.read.INVALID_FRAME_ID();
+      await frames.write.mint([user1, 0]);   // tokenId 1, frameId 0 (real)
+      const result = await frames.read.getFrameIdBatch([[1n, 99999n]]);
+      assert.equal(result[0], 0);
+      assert.equal(result[1], sentinel);
+    });
+
+    it("tokenExists returns false for missing/burned and true for live", async function () {
+      const { frames } = await deploy();
+      await frames.write.mint([user1, 0]);
+      assert.equal(await frames.read.tokenExists([1n]), true);
+      assert.equal(await frames.read.tokenExists([999n]), false);
+      await frames.write.burn([1n]);
+      assert.equal(await frames.read.tokenExists([1n]), false);
+    });
+
+    it("mint reverts when called with the reserved sentinel frameId", async function () {
+      const { frames } = await deploy();
+      const sentinel = await frames.read.INVALID_FRAME_ID();
+      await assert.rejects(
+        frames.write.mint([user1, sentinel]),
+        /Reserved frameId/,
+      );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // MEE: FrameMetadataUpdated event
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("MEE: FrameMetadataUpdated event", async function () {
+    it("emits when setFrameNameAndCreatedTimestamp is called", async function () {
+      const { frames } = await deploy();
+      await viem.assertions.emit(
+        frames.write.setFrameNameAndCreatedTimestamp([42, "Brand New Frame"]),
+        frames,
+        "FrameMetadataUpdated",
+      );
     });
   });
 });

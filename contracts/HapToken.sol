@@ -219,6 +219,31 @@ contract HapToken is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, Reentra
         super._update(from, to, value);
     }
 
+    /**
+     * @dev Reject blacklisted spenders in allowance-based transfers. _update
+     *      only inspects `from` and `to`, so without this override a sanctioned
+     *      address could still consume a pre-existing allowance.
+     */
+    function transferFrom(
+        address from,
+        address to,
+        uint256 value
+    ) public override(ERC20) returns (bool) {
+        if (blacklisted[msg.sender]) revert AddressIsBlacklisted(msg.sender);
+        return super.transferFrom(from, to, value);
+    }
+
+    /**
+     * @dev burnFrom is the other allowance-based transfer path — apply the same
+     *      spender blacklist check as transferFrom. The owner's own burn() is
+     *      unaffected because it goes through _update which already covers
+     *      blacklisted from.
+     */
+    function burnFrom(address account, uint256 value) public override {
+        if (blacklisted[msg.sender]) revert AddressIsBlacklisted(msg.sender);
+        super.burnFrom(account, value);
+    }
+
     // ========================================================================
     // Emergency Recovery
     // ========================================================================

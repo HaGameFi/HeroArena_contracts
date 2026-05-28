@@ -83,6 +83,20 @@ contract HeroArenaBattle is Ownable, AccessControl, ReentrancyGuard {
     ///         can never be swept.
     mapping(address => uint256) public outstandingBets;
 
+    /// @notice Winner-claimable balances for payouts that could not be pushed
+    ///         (e.g. winner is a contract with no payable receiver, or a token
+    ///         that reverts on transfer to a blacklisted address).
+    /// @dev    Indexed as pendingPayouts[token][user]. Settlement falls back to
+    ///         crediting this balance when _tryPayout() fails, so a bad
+    ///         recipient can never DoS a battle's settlement. Funds are
+    ///         reserved via reservedPendingPayouts[token] so rescueExtraTokens
+    ///         cannot drain them.
+    mapping(address => mapping(address => uint256)) public pendingPayouts;
+
+    /// @notice Total pending winner payouts per token, used to keep
+    ///         rescueExtraTokens() bounded the same way outstandingBets is.
+    mapping(address => uint256) public reservedPendingPayouts;
+
     /// @notice Hard cap on protocolFeeBps (10 %). Cannot be exceeded by admin.
     uint256 public constant MAX_PROTOCOL_FEE_BPS = 1000;
 
@@ -120,6 +134,11 @@ contract HeroArenaBattle is Ownable, AccessControl, ReentrancyGuard {
     /// @notice Bonus payout result. success=false means bonus was skipped (e.g. pool empty
     ///         or token reverted). Settlement still went through and the winner got the main reward.
     event BonusPayout(uint256 indexed battleId, address indexed winner, address indexed token, uint256 amount, bool success);
+    /// @notice Emitted when a settlement payout cannot be pushed to the winner
+    ///         and is credited to pendingPayouts for later pull.
+    event PayoutCredited(address indexed user, address indexed token, uint256 amount);
+    /// @notice Emitted when a user pulls a previously-credited payout balance.
+    event PayoutClaimed(address indexed user, address indexed token, uint256 amount);
 
     // ---------- Constructor ----------
     constructor(HeroArenaProfileInterface _HeroArenaProfileSC) Ownable(msg.sender) {
@@ -235,7 +254,7 @@ contract HeroArenaBattle is Ownable, AccessControl, ReentrancyGuard {
                     bool pushed = _tryPayout(b.betTokenAddress, feeRecipient, feeAmount);
                     if (!pushed) {
                         // Recipient unreachable — fall back to accrual instead of
-                        // DoS'ing the entire settlement (M-2 fix).
+                        // DoS'ing the entire settlement.
                         accruedProtocolFees[b.betTokenAddress] += feeAmount;
                         feeRecipient = address(0); // event reflects what actually happened
                     }
@@ -246,16 +265,36 @@ contract HeroArenaBattle is Ownable, AccessControl, ReentrancyGuard {
             }
         }
 
-        _payout(b.betTokenAddress, _winner, totalReward);
+        // Never let a bad winner address (non-payable contract, reverting ERC20
+        // transfer, etc.) stall the settlement. Try to push the reward; on
+        // failure, credit it to pendingPayouts and let the winner pull it later
+        // via claimPayout(). The battle still finalizes either way.
+        if (!_tryPayout(b.betTokenAddress, _winner, totalReward)) {
+            pendingPayouts[b.betTokenAddress][_winner] += totalReward;
+            reservedPendingPayouts[b.betTokenAddress] += totalReward;
+            emit PayoutCredited(_winner, b.betTokenAddress, totalReward);
+        }
 
         // Optional bonus token reward.
-        // M-1 fix: a bonus failure (empty pool, blacklist, weird token) MUST NOT
-        // block the main settlement. Try the transfer; if it fails, just emit
-        // BonusPayout(success=false) so off-chain knows it was skipped.
+        //
+        // A bonus failure (empty pool, blacklist, weird token) MUST NOT block
+        // the main settlement; if the transfer fails we emit BonusPayout with
+        // success=false so off-chain knows it was skipped.
+        //
+        // When the bonus token is also a bet token, bonus payouts must NOT dip
+        // into balance reserved for other battles' outstanding bets, accrued
+        // fees, or pending payouts; _hasFreeBalance gates that.
+        //
+        // Zero-stake battles never receive the bonus: if admin sets
+        // minBetAmount to 0, registered users could otherwise repeatedly
+        // create/join no-cost battles purely to farm the bonus pool.
         address _bonusToken = bonusToken;
         uint256 _bonusAmount = bonusAmount;
-        if (_bonusAmount > 0 && _bonusToken != address(0)) {
-            bool sent = _tryPayout(_bonusToken, _winner, _bonusAmount);
+        if (b.betAmount > 0 && _bonusAmount > 0 && _bonusToken != address(0)) {
+            bool sent = false;
+            if (_hasFreeBalance(_bonusToken, _bonusAmount)) {
+                sent = _tryPayout(_bonusToken, _winner, _bonusAmount);
+            }
             emit BonusPayout(_battleId, _winner, _bonusToken, _bonusAmount, sent);
         }
 
@@ -279,9 +318,42 @@ contract HeroArenaBattle is Ownable, AccessControl, ReentrancyGuard {
         uint256 refundAmount = b.betAmount;
         // Only the creator's bet was ever received — opponent never joined.
         outstandingBets[b.betTokenAddress] -= refundAmount;
-        _payout(b.betTokenAddress, b.selfAddress, refundAmount);
+
+        // Same pull-payment fallback as settleBattle. If refunding the creator
+        // fails (e.g. they were later blacklisted on the bet token), credit the
+        // refund to pendingPayouts so the close still finalizes.
+        if (!_tryPayout(b.betTokenAddress, b.selfAddress, refundAmount)) {
+            pendingPayouts[b.betTokenAddress][b.selfAddress] += refundAmount;
+            reservedPendingPayouts[b.betTokenAddress] += refundAmount;
+            emit PayoutCredited(b.selfAddress, b.betTokenAddress, refundAmount);
+        }
 
         emit BattleClosed(_battleId, msg.sender, refundAmount);
+    }
+
+    // =====================================================================
+    //                          Pull payments
+    // =====================================================================
+
+    /**
+     * @notice Withdraw a payout that was credited because the original push failed.
+     * @param _token Token to claim (address(0) = native ETH).
+     *
+     * @dev Mirror of pendingPayouts[token][msg.sender]. Reverts if there is nothing
+     *      to claim. Uses _payout (not _tryPayout): if the user is still in a state
+     *      where transfer fails, the claim simply reverts and they can retry later
+     *      from a different address state — but the battle is already settled and
+     *      cannot be re-blocked.
+     */
+    function claimPayout(address _token) external nonReentrant {
+        uint256 amount = pendingPayouts[_token][msg.sender];
+        require(amount > 0, "Nothing to claim");
+
+        pendingPayouts[_token][msg.sender] = 0;
+        reservedPendingPayouts[_token] -= amount;
+
+        _payout(_token, msg.sender, amount);
+        emit PayoutClaimed(msg.sender, _token, amount);
     }
 
     // =====================================================================
@@ -416,7 +488,11 @@ contract HeroArenaBattle is Ownable, AccessControl, ReentrancyGuard {
             ? address(this).balance
             : IERC20(_token).balanceOf(address(this));
 
-        uint256 reserved = outstandingBets[_token] + accruedProtocolFees[_token];
+        // Also reserve pendingPayouts so funds credited to winners that could
+        // not be pushed at settlement time cannot be swept by rescue.
+        uint256 reserved = outstandingBets[_token]
+            + accruedProtocolFees[_token]
+            + reservedPendingPayouts[_token];
         require(totalBalance >= reserved, "Accounting underflow");
         uint256 available = totalBalance - reserved;
         require(_amount <= available, "Amount exceeds rescuable balance");
@@ -436,13 +512,13 @@ contract HeroArenaBattle is Ownable, AccessControl, ReentrancyGuard {
         } else {
             require(msg.value == 0, "ETH not accepted for ERC20 bet");
             require(amount >= minBetAmount[1], "Bet amount below minimum");
-            // M-3 fix: detect fee-on-transfer / rebasing tokens via balance delta.
-            // If the token siphons part of the transfer (USDT-fee, PAXG, stETH, etc.)
+            // Detect fee-on-transfer / rebasing tokens via balance delta. If the
+            // token siphons part of the transfer (USDT-fee, PAXG, stETH, etc.)
             // the contract would receive less than `amount` while outstandingBets
-            // would be credited the full `amount`, breaking the accumulator invariant
-            // and causing later settlements to revert with insufficient balance.
-            // Rejecting at receive-time keeps state clean — the failed tx is fully
-            // rolled back, so the player loses nothing.
+            // would be credited the full `amount`, breaking the accumulator
+            // invariant and causing later settlements to revert with
+            // insufficient balance. Rejecting at receive-time keeps state clean
+            // — the failed tx is fully rolled back, so the player loses nothing.
             uint256 balBefore = IERC20(token).balanceOf(address(this));
             IERC20(token).safeTransferFrom(from, address(this), amount);
             uint256 received = IERC20(token).balanceOf(address(this)) - balBefore;
@@ -461,13 +537,29 @@ contract HeroArenaBattle is Ownable, AccessControl, ReentrancyGuard {
     }
 
     /**
-     * @dev Non-reverting variant of _payout. Returns true on success, false on failure
-     *      (instead of reverting). Used in settleBattle to make optional payouts
-     *      (bonus, push-mode protocol fee) survive recipient misconfiguration so the
-     *      mandatory winner payout still goes through.
-     *
-     *      Uses a low-level call for ERC20 to handle both standard tokens (return bool)
-     *      and non-standard ones (like USDT that return nothing).
+     * @dev Returns true if the contract holds enough of `token` to transfer `amount`
+     *      WITHOUT touching balance reserved for outstanding bets, accrued protocol
+     *      fees, or already-credited pending payouts. Used by the bonus payout
+     *      path so bonuses can never cause insolvency for other in-flight battles.
+     */
+    function _hasFreeBalance(address token, uint256 amount) internal view returns (bool) {
+        uint256 totalBalance = (token == address(0))
+            ? address(this).balance
+            : IERC20(token).balanceOf(address(this));
+        uint256 reserved = outstandingBets[token]
+            + accruedProtocolFees[token]
+            + reservedPendingPayouts[token];
+        if (totalBalance < reserved) return false;
+        return totalBalance - reserved >= amount;
+    }
+
+    /**
+     * @dev Non-reverting variant of _payout. Returns true on success, false on
+     *      failure (instead of reverting). Used in settleBattle to make optional
+     *      payouts (bonus, push-mode protocol fee, blacklisted winner) survive
+     *      recipient misconfiguration so the rest of the settlement still goes
+     *      through. Uses a low-level call for ERC20 to handle both standard
+     *      tokens (return bool) and non-standard ones (USDT-style, no return).
      */
     function _tryPayout(address token, address to, uint256 amount) internal returns (bool ok) {
         if (token == address(0)) {
@@ -476,7 +568,19 @@ contract HeroArenaBattle is Ownable, AccessControl, ReentrancyGuard {
             bytes memory data = abi.encodeWithSelector(IERC20.transfer.selector, to, amount);
             (bool success, bytes memory ret) = token.call(data);
             if (!success) return false;
-            ok = (ret.length == 0) || abi.decode(ret, (bool));
+            // Decode the return value defensively. Two malformed shapes can
+            // crash a naive abi.decode(ret, (bool)) and tear down the settlement:
+            //   1. ret.length != 0 and != 32      — abi.decode reverts on length
+            //   2. ret.length == 32 but value > 1 — abi.decode reverts on invalid bool
+            // Decode as uint256 (always succeeds for 32 bytes) and treat only an
+            // exact `1` as success; anything else is a failed transfer.
+            if (ret.length == 0) {
+                ok = true;
+            } else if (ret.length == 32) {
+                ok = (abi.decode(ret, (uint256)) == 1);
+            } else {
+                ok = false;
+            }
         }
     }
 }
