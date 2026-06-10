@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/token/ERC721/utils/ERC721Holder.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -22,7 +23,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
  *      compliance and predictable transfer behavior. The supportsInterface
  *      check in the add*Address admin functions is necessary but NOT sufficient.
  */
-contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
+contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     IERC20 public HapToken;
@@ -282,7 +283,7 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
      *                `type(uint256).max` to opt out of slippage protection.
      * @dev See createProfile for the slippage rationale.
      */
-    function updateAvatar(address _avatarAddress, uint256 _tokenId, uint256 _maxFee) external {
+    function updateAvatar(address _avatarAddress, uint256 _tokenId, uint256 _maxFee) external nonReentrant {
         // Checks
         require(hasRegistered[msg.sender], "User not registered");
         require(hasRole(AVATAR_ROLE, _avatarAddress), "Avatar address invalid");
@@ -317,7 +318,7 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
      *                `type(uint256).max` to opt out of slippage protection.
      * @dev See createProfile for the slippage rationale.
      */
-    function updateFrame(address _frameAddress, uint256 _frameTokenId, uint256 _maxFee) external {
+    function updateFrame(address _frameAddress, uint256 _frameTokenId, uint256 _maxFee) external nonReentrant {
         // Checks
         require(hasRegistered[msg.sender], "User not registered");
         require(hasRole(FRAME_ROLE, _frameAddress), "Frame address invalid");
@@ -355,7 +356,7 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
      *      NFT even if the project later revokes the role from a stale
      *      collection.
      */
-    function detachAvatar() external {
+    function detachAvatar() external nonReentrant {
         require(hasRegistered[msg.sender], "User not registered");
 
         address _previousAvatarAddress = _userMapping[msg.sender].avatarAddress;
@@ -375,7 +376,7 @@ contract HeroArenaProfile is AccessControl, ERC721Holder, Ownable {
      * @notice Detach (return) the user's currently-assigned frame NFT.
      * @dev Companion to detachAvatar(). Same rationale.
      */
-    function detachFrame() external {
+    function detachFrame() external nonReentrant {
         require(hasRegistered[msg.sender], "User not registered");
 
         address _previousFrameAddress = _userMapping[msg.sender].frameAddress;

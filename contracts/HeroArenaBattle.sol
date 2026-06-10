@@ -568,16 +568,20 @@ contract HeroArenaBattle is Ownable, AccessControl, ReentrancyGuard {
             bytes memory data = abi.encodeWithSelector(IERC20.transfer.selector, to, amount);
             (bool success, bytes memory ret) = token.call(data);
             if (!success) return false;
-            // Decode the return value defensively. Two malformed shapes can
-            // crash a naive abi.decode(ret, (bool)) and tear down the settlement:
+            // Decode the return value defensively. We must NOT use
+            // abi.decode(ret, (bool)) because two malformed shapes would crash it
+            // and tear down the settlement:
             //   1. ret.length != 0 and != 32      — abi.decode reverts on length
             //   2. ret.length == 32 but value > 1 — abi.decode reverts on invalid bool
-            // Decode as uint256 (always succeeds for 32 bytes) and treat only an
-            // exact `1` as success; anything else is a failed transfer.
+            // Decode as uint256 (always succeeds for 32 bytes) and treat ANY
+            // non-zero value as success. Some non-standard ERC20 implementations
+            // return values other than 1 on success; if we required `== 1` we
+            // would mis-flag those successful transfers as failures and credit
+            // pendingPayouts, producing duplicate payouts on later claim.
             if (ret.length == 0) {
                 ok = true;
             } else if (ret.length == 32) {
-                ok = (abi.decode(ret, (uint256)) == 1);
+                ok = (abi.decode(ret, (uint256)) != 0);
             } else {
                 ok = false;
             }

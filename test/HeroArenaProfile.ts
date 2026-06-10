@@ -903,4 +903,103 @@ describe("HeroArenaProfile", async function () {
       assert.equal(await profile.read.hasRole([adminRole, owner]), false);
     });
   });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // DRG: ReentrancyGuard on detachAvatar / detachFrame / updateAvatar / updateFrame
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("DRG: nonReentrant guards on NFT-callback paths", async function () {
+    async function setupReentrantAvatar(mode: number) {
+      const { hapToken, profile } = await deployAll();
+      const reentrant = await viem.deployContract("MockReentrantERC721");
+      await reentrant.write.setProfileTarget([profile.address]);
+
+      const AVATAR_ROLE = await profile.read.AVATAR_ROLE();
+      await profile.write.grantRole([AVATAR_ROLE, reentrant.address]);
+
+      // user1 mints a token from the reentrant collection and approves the profile.
+      const mintHash = await reentrant.write.mint([user1]);
+      const mintReceipt = await publicClient.waitForTransactionReceipt({ hash: mintHash });
+      const transferLogs = await publicClient.getContractEvents({
+        address: reentrant.address,
+        abi: reentrant.abi,
+        eventName: "Transfer",
+        fromBlock: mintReceipt.blockNumber,
+      });
+      const tokenId = transferLogs[0].args.tokenId as bigint;
+
+      await reentrant.write.setApprovalForAll(
+        [profile.address, true],
+        { account: user1Client.account },
+      );
+
+      await register(profile, user1Client);
+      // Attach the NFT. At this point the mock has reentryMode=0 (control).
+      await profile.write.updateAvatar(
+        [reentrant.address, tokenId, maxUint256],
+        { account: user1Client.account },
+      );
+
+      // Arm the reentrancy attack for the NEXT transfer (the detach-back to user1).
+      await reentrant.write.setReentryMode([mode, user1, tokenId]);
+      return { hapToken, profile, reentrant, tokenId };
+    }
+
+    it("detachAvatar reverts when the user's NFT collection tries to reenter detachAvatar()", async function () {
+      const { profile } = await setupReentrantAvatar(1);
+      await assert.rejects(
+        profile.write.detachAvatar({ account: user1Client.account }),
+        /ReentrancyGuardReentrantCall/,
+      );
+    });
+
+    it("detachAvatar reverts when the NFT collection tries to reenter updateAvatar()", async function () {
+      const { profile } = await setupReentrantAvatar(3);
+      await assert.rejects(
+        profile.write.detachAvatar({ account: user1Client.account }),
+        /ReentrancyGuardReentrantCall/,
+      );
+    });
+
+    it("detachAvatar succeeds when the collection performs no reentry (control)", async function () {
+      const { profile, reentrant, tokenId } = await setupReentrantAvatar(0);
+      await profile.write.detachAvatar({ account: user1Client.account });
+      assert.equal((await reentrant.read.ownerOf([tokenId])).toLowerCase(), user1.toLowerCase());
+    });
+
+    it("detachFrame reverts when the frame collection tries to reenter detachFrame()", async function () {
+      const { hapToken, profile } = await deployAll();
+      const reentrant = await viem.deployContract("MockReentrantERC721");
+      await reentrant.write.setProfileTarget([profile.address]);
+
+      const FRAME_ROLE = await profile.read.FRAME_ROLE();
+      await profile.write.grantRole([FRAME_ROLE, reentrant.address]);
+
+      const mintHash = await reentrant.write.mint([user1]);
+      const mintReceipt = await publicClient.waitForTransactionReceipt({ hash: mintHash });
+      const transferLogs = await publicClient.getContractEvents({
+        address: reentrant.address,
+        abi: reentrant.abi,
+        eventName: "Transfer",
+        fromBlock: mintReceipt.blockNumber,
+      });
+      const tokenId = transferLogs[0].args.tokenId as bigint;
+
+      await reentrant.write.setApprovalForAll(
+        [profile.address, true],
+        { account: user1Client.account },
+      );
+      await register(profile, user1Client);
+      await profile.write.updateFrame(
+        [reentrant.address, tokenId, maxUint256],
+        { account: user1Client.account },
+      );
+
+      await reentrant.write.setReentryMode([2, user1, tokenId]);
+      await assert.rejects(
+        profile.write.detachFrame({ account: user1Client.account }),
+        /ReentrancyGuardReentrantCall/,
+      );
+    });
+  });
 });

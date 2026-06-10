@@ -1252,6 +1252,38 @@ describe("HeroArenaBattle", async function () {
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // AME — _tryPayout must treat any non-zero 32-byte return as success
+  //         (not only the canonical `1`), otherwise a successful transfer with
+  //         a non-canonical return would be mis-flagged as failure.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("AME: non-canonical success return is treated as success", async function () {
+    it("bonus token returning 2 (instead of 1) is recognized as success", async function () {
+      const d = await startNativeBattle();
+      const weird = await viem.deployContract("MockWeirdSuccessERC20");
+      await weird.write.mint([d.battle.address, BONUS_AMOUNT]);
+      await d.battle.write.updateBonusToken([weird.address, BONUS_AMOUNT]);
+
+      const winnerBonusBefore = await weird.read.balanceOf([user1]);
+      const battleBonusBefore = await weird.read.balanceOf([d.battle.address]);
+
+      await d.battle.write.settleBattle([1n, user1], { account: liquidatorClient.account });
+
+      // The transfer DID happen — winner now holds the bonus.
+      assert.equal(
+        await weird.read.balanceOf([user1]),
+        winnerBonusBefore + BONUS_AMOUNT,
+      );
+      assert.equal(
+        await weird.read.balanceOf([d.battle.address]),
+        battleBonusBefore - BONUS_AMOUNT,
+      );
+      // Battle finalized normally.
+      assert.equal((await d.battle.read.getBattleInfo([1n])).isEnded, true);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // ZBB — zero-bet battles must not trigger bonus payouts
   // ═══════════════════════════════════════════════════════════════════════════
 
