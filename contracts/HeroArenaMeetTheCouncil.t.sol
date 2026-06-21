@@ -86,20 +86,21 @@ contract HeroArenaMeetTheCouncilTest is Test {
     // ═══════════════════════════════════════════════════════════════════════════
 
     function test_InitLevels_SetsMinMaxLevelId() public view {
-        assertEq(council.submitMinLevelId(), 0);
-        assertEq(council.submitMaxLevelId(), 6);
+        assertEq(council.submitMinLevelId(), 1);
+        assertEq(council.submitMaxLevelId(), 7);
     }
 
     function test_InitLevels_SetsLevelNamesAndPoints() public view {
         (string[] memory names, uint256[] memory points) =
             challenges.getLevelNameAndPointsBatch(_allLevelIds());
-        assertEq(names[0], "Ladder Climb");  assertEq(points[0], 5);
-        assertEq(names[1], "Knight Fight");  assertEq(points[1], 5);
-        assertEq(names[2], "Warrior Bath");  assertEq(points[2], 10);
-        assertEq(names[3], "Firestorm");     assertEq(points[3], 10);
-        assertEq(names[4], "Switcheroo");    assertEq(points[4], 15);
-        assertEq(names[5], "Wizard Dance");  assertEq(points[5], 15);
-        assertEq(names[6], "Cluster Bomb");  assertEq(points[6], 20);
+        assertEq(names[0], "Blank");         assertEq(points[0], 0);
+        assertEq(names[1], "Ladder Climb");  assertEq(points[1], 5);
+        assertEq(names[2], "Knight Fight");  assertEq(points[2], 5);
+        assertEq(names[3], "Warrior Bath");  assertEq(points[3], 10);
+        assertEq(names[4], "Firestorm");     assertEq(points[4], 10);
+        assertEq(names[5], "Switcheroo");    assertEq(points[5], 15);
+        assertEq(names[6], "Wizard Dance");  assertEq(points[6], 15);
+        assertEq(names[7], "Cluster Bomb");  assertEq(points[7], 20);
     }
 
     function test_InitLevels_RevertsIfCalledTwice() public {
@@ -145,21 +146,21 @@ contract HeroArenaMeetTheCouncilTest is Test {
 
     function test_SubmitLv_UpdatesChallengesLvCount() public {
         vm.prank(operator);
-        council.submitLv(user1, 0);
-        assertEq(challenges.lvCount(0), 1);
+        council.submitLv(user1, 1);
+        assertEq(challenges.lvCount(1), 1);
     }
 
     function test_SubmitLv_SetsSubmitStatus() public {
         vm.prank(operator);
-        council.submitLv(user1, 0);
-        assertTrue(challenges.getSubmitStatus(user1, 0));
+        council.submitLv(user1, 1);
+        assertTrue(challenges.getSubmitStatus(user1, 1));
     }
 
     function test_SubmitLv_EmitsEvent() public {
         vm.expectEmit(true, true, true, false);
-        emit HeroArenaMeetTheCouncil.LevelSubmited(user1, 1, 0, 5);
+        emit HeroArenaMeetTheCouncil.LevelSubmited(user1, 1, 1, 5);
         vm.prank(operator);
-        council.submitLv(user1, 0);
+        council.submitLv(user1, 1);
     }
 
     function test_SubmitLv_AllLevelIds() public {
@@ -167,7 +168,7 @@ contract HeroArenaMeetTheCouncilTest is Test {
         vm.prank(user2);
         profile.createProfile(1, type(uint256).max);
 
-        for (uint8 lvId = 0; lvId <= 6; lvId++) {
+        for (uint8 lvId = 1; lvId <= 7; lvId++) {
             vm.prank(operator);
             council.submitLv(user1, lvId);
             assertTrue(challenges.getSubmitStatus(user1, lvId));
@@ -178,33 +179,40 @@ contract HeroArenaMeetTheCouncilTest is Test {
         council.updateAvailableSubmit(false);
         vm.prank(operator);
         vm.expectRevert("Cannot submit");
-        council.submitLv(user1, 0);
+        council.submitLv(user1, 1);
     }
 
     function test_SubmitLv_RevertsOnInvalidLevelId() public {
         vm.prank(operator);
         vm.expectRevert("Input levelId unavailable");
-        council.submitLv(user1, 7);
+        council.submitLv(user1, 8);
+    }
+
+    function test_SubmitLv_RevertsOnBlankLevelId() public {
+        // Level 0 ("Blank") is below submitMinLevelId and not submittable.
+        vm.prank(operator);
+        vm.expectRevert("Input levelId unavailable");
+        council.submitLv(user1, 0);
     }
 
     function test_SubmitLv_RevertsOnDuplicateSubmit() public {
         vm.prank(operator);
-        council.submitLv(user1, 0);
+        council.submitLv(user1, 1);
         vm.prank(operator);
         vm.expectRevert("User can only submit once");
-        council.submitLv(user1, 0);
+        council.submitLv(user1, 1);
     }
 
     function test_SubmitLv_RevertsIfNotOperator() public {
         vm.prank(stranger);
         vm.expectRevert("Not an operator role");
-        council.submitLv(user1, 0);
+        council.submitLv(user1, 1);
     }
 
     function test_SubmitLv_OwnerIsNotOperatorByDefault() public {
         vm.prank(owner);
         vm.expectRevert("Not an operator role");
-        council.submitLv(user1, 0);
+        council.submitLv(user1, 1);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -222,7 +230,7 @@ contract HeroArenaMeetTheCouncilTest is Test {
 
         vm.prank(operator);
         vm.expectRevert("Not an operator role");
-        council.submitLv(user1, 0);
+        council.submitLv(user1, 1);
     }
 
     function test_GrantRole_RevertsIfNotAdmin() public {
@@ -234,8 +242,8 @@ contract HeroArenaMeetTheCouncilTest is Test {
     // ─── helpers ──────────────────────────────────────────────────────────────
 
     function _allLevelIds() internal pure returns (uint8[] memory ids) {
-        ids = new uint8[](7);
-        for (uint8 i = 0; i < 7; i++) ids[i] = i;
+        ids = new uint8[](8);
+        for (uint8 i = 0; i < 8; i++) ids[i] = i;
     }
 
     receive() external payable {}

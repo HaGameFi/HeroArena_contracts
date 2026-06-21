@@ -98,21 +98,22 @@ describe("HeroArenaMeetTheCouncil", async function () {
   describe("initLevels", async function () {
     it("sets submitMinLevelId and submitMaxLevelId", async function () {
       const { council } = await deployAll();
-      assert.equal(await council.read.submitMinLevelId(), 0);
-      assert.equal(await council.read.submitMaxLevelId(), 6);
+      assert.equal(await council.read.submitMinLevelId(), 1);
+      assert.equal(await council.read.submitMaxLevelId(), 7);
     });
 
     it("sets all level names and points", async function () {
       const { challenges } = await deployAll();
-      const ids = [0, 1, 2, 3, 4, 5, 6];
+      const ids = [0, 1, 2, 3, 4, 5, 6, 7];
       const [names, points] = await challenges.read.getLevelNameAndPointsBatch([ids]);
-      assert.equal(names[0], "Ladder Climb");  assert.equal(points[0], 5n);
-      assert.equal(names[1], "Knight Fight");  assert.equal(points[1], 5n);
-      assert.equal(names[2], "Warrior Bath");  assert.equal(points[2], 10n);
-      assert.equal(names[3], "Firestorm");     assert.equal(points[3], 10n);
-      assert.equal(names[4], "Switcheroo");    assert.equal(points[4], 15n);
-      assert.equal(names[5], "Wizard Dance");  assert.equal(points[5], 15n);
-      assert.equal(names[6], "Cluster Bomb");  assert.equal(points[6], 20n);
+      assert.equal(names[0], "Blank");         assert.equal(points[0], 0n);
+      assert.equal(names[1], "Ladder Climb");  assert.equal(points[1], 5n);
+      assert.equal(names[2], "Knight Fight");  assert.equal(points[2], 5n);
+      assert.equal(names[3], "Warrior Bath");  assert.equal(points[3], 10n);
+      assert.equal(names[4], "Firestorm");     assert.equal(points[4], 10n);
+      assert.equal(names[5], "Switcheroo");    assert.equal(points[5], 15n);
+      assert.equal(names[6], "Wizard Dance");  assert.equal(points[6], 15n);
+      assert.equal(names[7], "Cluster Bomb");  assert.equal(points[7], 20n);
     });
 
     it("reverts if called twice", async function () {
@@ -165,26 +166,26 @@ describe("HeroArenaMeetTheCouncil", async function () {
   describe("submitLv", async function () {
     it("increments lvCount in Challenges contract", async function () {
       const { challenges, council } = await deployAll();
-      await council.write.submitLv([user1, 0], { account: operatorClient.account });
-      assert.equal(await challenges.read.lvCount([0]), 1n);
+      await council.write.submitLv([user1, 1], { account: operatorClient.account });
+      assert.equal(await challenges.read.lvCount([1]), 1n);
     });
 
     it("sets submit status in Challenges contract", async function () {
       const { challenges, council } = await deployAll();
-      await council.write.submitLv([user1, 0], { account: operatorClient.account });
-      assert.equal(await challenges.read.getSubmitStatus([user1, 0]), true);
+      await council.write.submitLv([user1, 1], { account: operatorClient.account });
+      assert.equal(await challenges.read.getSubmitStatus([user1, 1]), true);
     });
 
     it("emits LevelSubmited event", async function () {
       const { council } = await deployAll();
-      const hash    = await council.write.submitLv([user1, 0], { account: operatorClient.account });
+      const hash    = await council.write.submitLv([user1, 1], { account: operatorClient.account });
       const receipt = await publicClient.getTransactionReceipt({ hash });
       assert.equal(receipt.status, "success");
     });
 
-    it("works for all valid level IDs (0–6)", async function () {
+    it("works for all valid level IDs (1–7)", async function () {
       const { challenges, council } = await deployAll();
-      for (let lvId = 0; lvId <= 6; lvId++) {
+      for (let lvId = 1; lvId <= 7; lvId++) {
         await council.write.submitLv([user1, lvId], { account: operatorClient.account });
         assert.equal(await challenges.read.getSubmitStatus([user1, lvId]), true);
       }
@@ -194,7 +195,7 @@ describe("HeroArenaMeetTheCouncil", async function () {
       const { council } = await deployAll();
       await council.write.updateAvailableSubmit([false]);
       await assert.rejects(
-        council.write.submitLv([user1, 0], { account: operatorClient.account }),
+        council.write.submitLv([user1, 1], { account: operatorClient.account }),
         /Cannot submit/,
       );
     });
@@ -202,16 +203,24 @@ describe("HeroArenaMeetTheCouncil", async function () {
     it("reverts for levelId above max", async function () {
       const { council } = await deployAll();
       await assert.rejects(
-        council.write.submitLv([user1, 7], { account: operatorClient.account }),
+        council.write.submitLv([user1, 8], { account: operatorClient.account }),
+        /Input levelId unavailable/,
+      );
+    });
+
+    it("reverts for levelId below min (Blank level 0)", async function () {
+      const { council } = await deployAll();
+      await assert.rejects(
+        council.write.submitLv([user1, 0], { account: operatorClient.account }),
         /Input levelId unavailable/,
       );
     });
 
     it("reverts on duplicate submit", async function () {
       const { council } = await deployAll();
-      await council.write.submitLv([user1, 0], { account: operatorClient.account });
+      await council.write.submitLv([user1, 1], { account: operatorClient.account });
       await assert.rejects(
-        council.write.submitLv([user1, 0], { account: operatorClient.account }),
+        council.write.submitLv([user1, 1], { account: operatorClient.account }),
         /User can only submit once/,
       );
     });
@@ -219,7 +228,7 @@ describe("HeroArenaMeetTheCouncil", async function () {
     it("reverts if caller is not operator", async function () {
       const { council } = await deployAll();
       await assert.rejects(
-        council.write.submitLv([user1, 0], { account: strangerClient.account }),
+        council.write.submitLv([user1, 1], { account: strangerClient.account }),
         /Not an operator role/,
       );
     });
@@ -227,7 +236,7 @@ describe("HeroArenaMeetTheCouncil", async function () {
     it("owner cannot submit without operator role", async function () {
       const { council } = await deployAll();
       await assert.rejects(
-        council.write.submitLv([user1, 0], { account: ownerClient.account }),
+        council.write.submitLv([user1, 1], { account: ownerClient.account }),
         /Not an operator role/,
       );
     });
@@ -248,7 +257,7 @@ describe("HeroArenaMeetTheCouncil", async function () {
       const { council } = await deployAll();
       await council.write.revokeRole([OPERATOR_ROLE, operator]);
       await assert.rejects(
-        council.write.submitLv([user1, 0], { account: operatorClient.account }),
+        council.write.submitLv([user1, 1], { account: operatorClient.account }),
         /Not an operator role/,
       );
     });
@@ -345,7 +354,7 @@ describe("HeroArenaMeetTheCouncil", async function () {
       // is gated by CHALLENGE_ADMIN_ROLE, not Ownable.
       await challenges.write.grantRole([CHALLENGE_ADMIN_ROLE, council.address]);
       await council.write.initLevels();
-      assert.equal(await council.read.submitMaxLevelId(), 6);
+      assert.equal(await council.read.submitMaxLevelId(), 7);
     });
 
     it("initLevels reverts without CHALLENGE_ADMIN_ROLE on Challenges", async function () {

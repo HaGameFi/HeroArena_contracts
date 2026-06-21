@@ -88,16 +88,17 @@ contract HeroArenaMeetTheCouncil is AccessControl, Ownable {
     function initLevels() external onlyOwner {
         require(submitMaxLevelId == 0, "Already initialized");
 
-        HeroArenaChallengesSC.setLevelNameAndRewardPoints(0, "Ladder Climb", 5);
-        HeroArenaChallengesSC.setLevelNameAndRewardPoints(1, "Knight Fight", 5);
-        HeroArenaChallengesSC.setLevelNameAndRewardPoints(2, "Warrior Bath", 10);
-        HeroArenaChallengesSC.setLevelNameAndRewardPoints(3, "Firestorm", 10);
-        HeroArenaChallengesSC.setLevelNameAndRewardPoints(4, "Switcheroo", 15);
-        HeroArenaChallengesSC.setLevelNameAndRewardPoints(5, "Wizard Dance", 15);
-        HeroArenaChallengesSC.setLevelNameAndRewardPoints(6, "Cluster Bomb", 20);
+        HeroArenaChallengesSC.setLevelNameAndRewardPoints(0, "Blank", 0);
+        HeroArenaChallengesSC.setLevelNameAndRewardPoints(1, "Ladder Climb", 5);
+        HeroArenaChallengesSC.setLevelNameAndRewardPoints(2, "Knight Fight", 5);
+        HeroArenaChallengesSC.setLevelNameAndRewardPoints(3, "Warrior Bath", 10);
+        HeroArenaChallengesSC.setLevelNameAndRewardPoints(4, "Firestorm", 10);
+        HeroArenaChallengesSC.setLevelNameAndRewardPoints(5, "Switcheroo", 15);
+        HeroArenaChallengesSC.setLevelNameAndRewardPoints(6, "Wizard Dance", 15);
+        HeroArenaChallengesSC.setLevelNameAndRewardPoints(7, "Cluster Bomb", 20);
 
-        submitMinLevelId = 0;
-        submitMaxLevelId = 6;
+        submitMinLevelId = 1;
+        submitMaxLevelId = 7;
     }
 
     /**

@@ -1,9 +1,9 @@
 import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
 
 export default buildModule("HeroArenaSwapModule", (m) => {
-  const swap = m.contract("HeroArenaSwap", ["0x6df1e5f15d296bc9a1134a160c24eb9ec694e694", 5000000000000000000000n]);
+  const swap = m.contract("HeroArenaSwap", ["0xa4082103a3ccd5a0599e28f6e21c87a477f5e97f", 5000000000000000000000n]);
 
-  // transfer some HAP into SC
+  // transfer some HAP into SC !!!
 
   return { swap };
 });

@@ -70,11 +70,11 @@ contract HeroArenaMiningFactoryV1Test is Test {
 
     function test_Constructor_SetsAllAvatarNames() public view {
         uint8[] memory ids = new uint8[](3);
-        ids[0] = 0; ids[1] = 1; ids[2] = 89;
+        ids[0] = 1; ids[1] = 11; ids[2] = 25;
         (string[] memory names, ) = avatarsSC.getAvatarNameAndCreatedTimestampBatch(ids);
-        assertEq(names[0], "Knight_v0");
+        assertEq(names[0], "Archer_v1");
         assertEq(names[1], "Knight_v1");
-        assertEq(names[2], "Medic_v1");
+        assertEq(names[2], "Wizard_v5");
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

@@ -82,10 +82,10 @@ describe("HeroArenaMiningFactoryV1", async function () {
 
     it("sets avatar names in constructor", async function () {
       const { avatarsSC } = await deploy();
-      const [names] = await avatarsSC.read.getAvatarNameAndCreatedTimestampBatch([[0, 1, 89]]);
-      assert.equal(names[0], "Knight_v0");
+      const [names] = await avatarsSC.read.getAvatarNameAndCreatedTimestampBatch([[1, 11, 25]]);
+      assert.equal(names[0], "Archer_v1");
       assert.equal(names[1], "Knight_v1");
-      assert.equal(names[2], "Medic_v1");
+      assert.equal(names[2], "Wizard_v5");
     });
   });
 

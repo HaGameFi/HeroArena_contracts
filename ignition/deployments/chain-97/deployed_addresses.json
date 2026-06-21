@@ -1,7 +1,3 @@
 {
-  "HeroArenaProfileModule#HeroArenaProfile": "0x89673B08c6c28916141538aae6fE2ecF41bea105",
-  "HeroArenaMiningFactoryV1Module#HeroArenaMiningFactoryV1": "0x2E2209388bDAE1888748e7637ceE7a5d3110A601",
-  "HeroArenaSwapModule#HeroArenaSwap": "0x01452CBF78cB11fC8f8c6503FC16881592fD4BB8",
-  "HeroArenaChallengesModule#HeroArenaChallenges": "0x328428273295714A9907040D0C337a2BaAfF7623",
-  "HeroArenaMeetTheCouncilModule#HeroArenaMeetTheCouncil": "0xdB581a164eF1148E851d18E04c37104E045041c3"
+  "HeroArenaMiningFactoryV1Module#HeroArenaMiningFactoryV1": "0xb66fdf2923BCEd95bA6A7f9dbE2D24Ca9468D423"
 }
