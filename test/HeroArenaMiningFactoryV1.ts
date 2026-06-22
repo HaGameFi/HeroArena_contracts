@@ -84,8 +84,8 @@ describe("HeroArenaMiningFactoryV1", async function () {
       const { avatarsSC } = await deploy();
       const [names] = await avatarsSC.read.getAvatarNameAndCreatedTimestampBatch([[1, 11, 25]]);
       assert.equal(names[0], "Archer_v1");
-      assert.equal(names[1], "Knight_v1");
-      assert.equal(names[2], "Wizard_v5");
+      assert.equal(names[1], "Cleric_v5");
+      assert.equal(names[2], "Wizard_v1");
     });
   });
 

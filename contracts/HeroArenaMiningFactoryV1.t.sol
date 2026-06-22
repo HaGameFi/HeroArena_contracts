@@ -73,8 +73,8 @@ contract HeroArenaMiningFactoryV1Test is Test {
         ids[0] = 1; ids[1] = 11; ids[2] = 25;
         (string[] memory names, ) = avatarsSC.getAvatarNameAndCreatedTimestampBatch(ids);
         assertEq(names[0], "Archer_v1");
-        assertEq(names[1], "Knight_v1");
-        assertEq(names[2], "Wizard_v5");
+        assertEq(names[1], "Cleric_v5");
+        assertEq(names[2], "Wizard_v1");
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
