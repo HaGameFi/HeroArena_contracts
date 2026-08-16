@@ -19,7 +19,7 @@ import { writeFile } from "node:fs/promises";
 
 // TGE Unix timestamp (seconds). Must be in the future.
 // Compute: Math.floor(new Date("2026-09-01T12:00:00Z").getTime() / 1000)
-const TGE_TIMESTAMP_RAW = 1782009000; // TODO: set real TGE unix timestamp (seconds) 必须大于1小时
+const TGE_TIMESTAMP_RAW = 0; // TODO: set signed launch-document TGE timestamp, at least 1 hour in the future
 
 // Gnosis Safe 3-of-5 multisig — will receive DEFAULT_ADMIN_ROLE on all contracts
 const ADMIN_MULTISIG    = "0x02334708A7069993fe7f14cdbfC9863AcF3598C4"; // TODO: real admin multisig
@@ -30,42 +30,49 @@ const GUARDIAN_MULTISIG = "0xd861Af70b9414762873Ad7387b95E96c6f6E8140"; // TODO:
 
 // Vesting beneficiary addresses (one per token category)
 const BENEFICIARIES = {
-  // 70 M  — immediate TGE unlock; send straight to DEX liquidity pool wallet
-  LIQUIDITY:       ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000010", // TODO
+  // 9 M — initial PancakeSwap liquidity released at TGE. The other 41 M of
+  // Liquidity & Listings is deposited into HapTreasury as a non-circulating reserve.
+  INITIAL_LIQUIDITY: ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000010", // TODO: LP provisioning wallet
 
-  // 350 M — 1-month cliff, 60-month linear; game reward distribution contract
-  P2E_REWARDS:     ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000011", // TODO
+  // 30 M — 20% at TGE, remaining 80% over 8 months; approved launchpad vault
+  PUBLIC_IDO:        ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000011", // TODO
 
-  // 100 M — 1-month cliff, 48-month linear; staking reward distributor
-  STAKING_REWARDS: ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000012", // TODO
+  // 25 M — 3-month cliff, 18-month release; signed strategic/incubator agreements
+  STRATEGIC:         ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000012", // TODO
 
-  // 120 M — 5 % TGE, 3-month cliff, 36-month linear; ecosystem fund multisig
-  ECOSYSTEM:       ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000013", // TODO
+  // 280 M — 3-month cliff, performance-based maximum budget over 72 months
+  PLAYER_REWARDS:    ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000013", // TODO: reward controller
+
+  // 60 M — 3-month cliff, dynamic maximum budget over 48 months
+  STAKING_REWARDS:   ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000014", // TODO
+
+  // 125 M — 3-month cliff, 48-month availability subject to partner milestones
+  ECOSYSTEM:         ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000015", // TODO
 
   // 150 M — 12-month cliff, 36-month linear; team multisig (revocable)
-  TEAM:            ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000014", // TODO
+  TEAM:              ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000016", // TODO
 
-  // 30 M  — 6-month cliff, 24-month linear; advisors (revocable)
-  ADVISORS:        ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000015", // TODO
+  // 20 M — 6-month cliff, 24-month linear; advisors (revocable)
+  ADVISORS:          ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000017", // TODO
 
-  // 100 M — 12-month cliff, 48-month linear; protocol reserve multisig
-  TREASURY:        ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000016", // TODO
+  // 150 M — 12-month cliff, 48-month linear; protocol reserve multisig
+  TREASURY:          ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000018", // TODO
 
-  // 40 M  — 10 % TGE, 0-month cliff, 18-month linear; marketing wallet
-  MARKETING:       ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000017", // TODO
+  // 70 M — 5% at TGE, remaining allocation over 24 months
+  MARKETING:         ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000019", // TODO
 
-  // 10 M  — 50 % TGE, 0-month cliff, 6-month linear; airdrop distributor
-  AIRDROP:         ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000018", // TODO
+  // 40 M — 10% at TGE, remaining allocation over 12 months
+  COMMUNITY:         ADMIN_MULTISIG,//"0x000000000000000000000000000000000000001a", // TODO
 } as const;
-
-// Launchpad vault that receives the 30 M public IDO allocation at TGE
-const IDO_VAULT = ADMIN_MULTISIG;//"0x0000000000000000000000000000000000000019"; // TODO: Kommunitas vault
 
 // ============================================================================
 // Internal constants (do not change)
 // ============================================================================
 
 const ONE_MONTH = 30n * 24n * 60n * 60n; // 30 days in seconds (bigint)
+const VESTING_FUND = parseEther("959000000");
+const LIQUIDITY_LISTINGS_RESERVE = parseEther("41000000");
+const EXPECTED_TGE_CIRCULATION = parseEther("22500000");
 
 /** Right-pads a string to bytes32, matching ethers.encodeBytes32String() */
 const LABEL = (s: string): `0x${string}` =>
@@ -84,20 +91,31 @@ function validateConfig() {
     errors.push("TGE_TIMESTAMP_RAW is 0 — set a real Unix timestamp");
   } else {
     const nowSec = Math.floor(Date.now() / 1000);
-    if (TGE_TIMESTAMP_RAW <= nowSec) {
-      errors.push(`TGE_TIMESTAMP_RAW ${TGE_TIMESTAMP_RAW} is in the past (now=${nowSec})`);
+    if (TGE_TIMESTAMP_RAW <= nowSec + 3600) {
+      errors.push(`TGE_TIMESTAMP_RAW ${TGE_TIMESTAMP_RAW} must be more than 1 hour in the future (now=${nowSec})`);
     }
   }
 
   if (TODO_PLACEHOLDER.test(ADMIN_MULTISIG))    errors.push("ADMIN_MULTISIG is placeholder");
   if (TODO_PLACEHOLDER.test(GUARDIAN_MULTISIG)) errors.push("GUARDIAN_MULTISIG is placeholder");
   if ((ADMIN_MULTISIG as string) === (GUARDIAN_MULTISIG as string)) errors.push("ADMIN_MULTISIG and GUARDIAN_MULTISIG must differ");
-  if (TODO_PLACEHOLDER.test(IDO_VAULT))         errors.push("IDO_VAULT is placeholder");
-
   for (const [key, addr] of Object.entries(BENEFICIARIES)) {
     if (TODO_PLACEHOLDER.test(addr as string)) {
       errors.push(`BENEFICIARIES.${key} is placeholder`);
     }
+  }
+
+  const schedules = buildSchedules();
+  const scheduled = schedules.reduce((sum, schedule) => sum + schedule.total, 0n);
+  const tgeCirculation = schedules.reduce((sum, schedule) => sum + schedule.tgeAmount, 0n);
+  if (scheduled !== VESTING_FUND) {
+    errors.push(`vesting schedules total ${formatEther(scheduled)} HAP, expected 959,000,000`);
+  }
+  if (tgeCirculation !== EXPECTED_TGE_CIRCULATION) {
+    errors.push(`TGE circulation ${formatEther(tgeCirculation)} HAP, expected 22,500,000`);
+  }
+  if (scheduled + LIQUIDITY_LISTINGS_RESERVE !== parseEther("1000000000")) {
+    errors.push("vesting plus Liquidity & Listings reserve does not equal 1,000,000,000 HAP");
   }
 
   if (errors.length > 0) {
@@ -111,47 +129,67 @@ function validateConfig() {
 }
 
 // ============================================================================
-// Vesting schedule definitions (9 tranches, 970 M HAP total)
+// Vesting schedule definitions (11 tranches, 959 M HAP total)
+//
+// HapVesting releases continuously and linearly. GitBook's "monthly" wording
+// is represented here as the same maximum contractual availability over the
+// stated number of months; claiming does not automatically distribute budgets.
 // ============================================================================
 
 function buildSchedules() {
-  const TGE = BigInt(TGE_TIMESTAMP_RAW);
-
   return [
     {
-      label:       LABEL("LIQUIDITY"),
-      beneficiary: BENEFICIARIES.LIQUIDITY,
-      total:       parseEther("70000000"),
-      tgeAmount:   parseEther("70000000"),  // 100 % at TGE
+      label:       LABEL("INITIAL_LIQUIDITY"),
+      beneficiary: BENEFICIARIES.INITIAL_LIQUIDITY,
+      total:       parseEther("9000000"),
+      tgeAmount:   parseEther("9000000"), // US$90k / US$0.01 reference price
       cliff:       0n,
       vesting:     0n,
       revocable:   false,
     },
     {
-      label:       LABEL("P2E_REWARDS"),
-      beneficiary: BENEFICIARIES.P2E_REWARDS,
-      total:       parseEther("350000000"),
+      label:       LABEL("PUBLIC_IDO"),
+      beneficiary: BENEFICIARIES.PUBLIC_IDO,
+      total:       parseEther("30000000"),
+      tgeAmount:   parseEther("6000000"), // 20% at TGE
+      cliff:       0n,
+      vesting:     8n * ONE_MONTH,
+      revocable:   false,
+    },
+    {
+      label:       LABEL("STRATEGIC"),
+      beneficiary: BENEFICIARIES.STRATEGIC,
+      total:       parseEther("25000000"),
       tgeAmount:   0n,
-      cliff:       ONE_MONTH,
-      vesting:     60n * ONE_MONTH,
+      cliff:       3n * ONE_MONTH,
+      vesting:     18n * ONE_MONTH,
+      revocable:   false,
+    },
+    {
+      label:       LABEL("PLAYER_REWARDS"),
+      beneficiary: BENEFICIARIES.PLAYER_REWARDS,
+      total:       parseEther("280000000"),
+      tgeAmount:   0n,
+      cliff:       3n * ONE_MONTH,
+      vesting:     72n * ONE_MONTH,
       revocable:   false,
     },
     {
       label:       LABEL("STAKING_REWARDS"),
       beneficiary: BENEFICIARIES.STAKING_REWARDS,
-      total:       parseEther("100000000"),
+      total:       parseEther("60000000"),
       tgeAmount:   0n,
-      cliff:       ONE_MONTH,
+      cliff:       3n * ONE_MONTH,
       vesting:     48n * ONE_MONTH,
       revocable:   false,
     },
     {
       label:       LABEL("ECOSYSTEM"),
       beneficiary: BENEFICIARIES.ECOSYSTEM,
-      total:       parseEther("120000000"),
-      tgeAmount:   parseEther("6000000"),   // 5 % at TGE
+      total:       parseEther("125000000"),
+      tgeAmount:   0n,
       cliff:       3n * ONE_MONTH,
-      vesting:     36n * ONE_MONTH,
+      vesting:     48n * ONE_MONTH,
       revocable:   false,
     },
     {
@@ -166,7 +204,7 @@ function buildSchedules() {
     {
       label:       LABEL("ADVISORS"),
       beneficiary: BENEFICIARIES.ADVISORS,
-      total:       parseEther("30000000"),
+      total:       parseEther("20000000"),
       tgeAmount:   0n,
       cliff:       6n * ONE_MONTH,
       vesting:     24n * ONE_MONTH,
@@ -175,7 +213,7 @@ function buildSchedules() {
     {
       label:       LABEL("TREASURY"),
       beneficiary: BENEFICIARIES.TREASURY,
-      total:       parseEther("100000000"),
+      total:       parseEther("150000000"),
       tgeAmount:   0n,
       cliff:       12n * ONE_MONTH,
       vesting:     48n * ONE_MONTH,
@@ -184,19 +222,19 @@ function buildSchedules() {
     {
       label:       LABEL("MARKETING"),
       beneficiary: BENEFICIARIES.MARKETING,
-      total:       parseEther("40000000"),
-      tgeAmount:   parseEther("4000000"),   // 10 % at TGE
+      total:       parseEther("70000000"),
+      tgeAmount:   parseEther("3500000"), // 5% at TGE
       cliff:       0n,
-      vesting:     18n * ONE_MONTH,
+      vesting:     24n * ONE_MONTH,
       revocable:   false,
     },
     {
-      label:       LABEL("AIRDROP"),
-      beneficiary: BENEFICIARIES.AIRDROP,
-      total:       parseEther("10000000"),
-      tgeAmount:   parseEther("5000000"),   // 50 % at TGE
+      label:       LABEL("COMMUNITY"),
+      beneficiary: BENEFICIARIES.COMMUNITY,
+      total:       parseEther("40000000"),
+      tgeAmount:   parseEther("4000000"), // 10% at TGE
       cliff:       0n,
-      vesting:     6n * ONE_MONTH,
+      vesting:     12n * ONE_MONTH,
       revocable:   false,
     },
   ];
@@ -308,16 +346,27 @@ await publicClient.waitForTransactionReceipt({ hash });
 console.log("  ✓ HapTreasury protected");
 
 // ============================================================================
-// Step 5 — Fund vesting contract + create 9 schedules
+// Step 5 — Fund vesting, reserve Liquidity & Listings, create 11 schedules
 // ============================================================================
 
 console.log(`\n${sep("-")}`);
-console.log("[5/6] Funding vesting and creating schedules...");
+console.log("[5/6] Funding tokenomics allocations and creating schedules...");
 
-// Transfer 970 M HAP to HapVesting (30 M IDO kept in deployer for next step)
-hash = await token.write.transfer([vestingAddress, parseEther("970000000")]);
+// 959 M is contractually available through vesting schedules. The remaining
+// 41 M is the undeployed Liquidity & Listings reserve held in HapTreasury.
+hash = await token.write.transfer([vestingAddress, VESTING_FUND]);
 await publicClient.waitForTransactionReceipt({ hash });
-console.log("  ✓ 970 M HAP → HapVesting");
+console.log("  ✓ 959 M HAP → HapVesting");
+
+hash = await token.write.approve([treasuryAddress, LIQUIDITY_LISTINGS_RESERVE]);
+await publicClient.waitForTransactionReceipt({ hash });
+hash = await treasury.write.receiveFunds([
+  tokenAddress,
+  LIQUIDITY_LISTINGS_RESERVE,
+  "LIQUIDITY_LISTINGS_RESERVE",
+]);
+await publicClient.waitForTransactionReceipt({ hash });
+console.log("  ✓ 41 M HAP → HapTreasury (non-circulating Liquidity & Listings reserve)");
 
 const schedules = buildSchedules();
 let totalScheduled = 0n;
@@ -339,12 +388,8 @@ for (const s of schedules) {
   totalScheduled += s.total;
 }
 
-console.log("  ✓ Schedules created. Total scheduled:", formatEther(totalScheduled), "HAP");
-
-// Transfer 30 M IDO allocation to launchpad vault
-hash = await token.write.transfer([IDO_VAULT, parseEther("30000000")]);
-await publicClient.waitForTransactionReceipt({ hash });
-console.log("  ✓ 30 M HAP → IDO vault:", shortAddr(IDO_VAULT));
+console.log("  ✓ 11 schedules created. Total scheduled:", formatEther(totalScheduled), "HAP");
+console.log("  ✓ Maximum TGE circulation:", formatEther(EXPECTED_TGE_CIRCULATION), "HAP (2.25%)");
 
 // Sanity check: deployer should have ~0 HAP remaining
 const deployerBalance = await token.read.balanceOf([deployer]);
@@ -428,7 +473,12 @@ const deploymentRecord = {
     HapTreasury: treasuryAddress,
   },
   beneficiaries: BENEFICIARIES,
-  idoVault:      IDO_VAULT,
+  tokenomics: {
+    vestingFundHap: formatEther(VESTING_FUND),
+    liquidityListingsReserveHap: formatEther(LIQUIDITY_LISTINGS_RESERVE),
+    maximumTgeCirculationHap: formatEther(EXPECTED_TGE_CIRCULATION),
+    scheduleCount: schedules.length,
+  },
 };
 
 const outFile = `deployment-${NETWORK_NAME}-${Date.now()}.json`;

@@ -52,6 +52,24 @@
 ### LIQUIDATOR_ROLE (PvP)
 0x5e17fc5225d4a099df75359ce1f405503ca79498a8dc46a7d583235a0ee45c16
 
+## Governance deployment and role handover
+
+`VoteEventFactory` deliberately treats ownership and `EVENT_CREATOR_ROLE` as
+separate authorities. Transferring factory ownership moves
+`DEFAULT_ADMIN_ROLE`, but does not automatically remove existing event
+creators. During every signer rotation or deployment handover, the new role
+admin must explicitly remove every retired creator:
+
+```solidity
+bytes32 creatorRole = factory.EVENT_CREATOR_ROLE();
+factory.revokeRole(creatorRole, oldCreator);
+```
+
+After handover, verify `hasRole(creatorRole, oldCreator) == false` for every
+retired signer and grant the role only to the approved governance multisig.
+The VotingEscrowHAP and VotingRewardVault addresses must also be protected in
+HapToken with `setProtected` before users deposit funds.
+
 ## License
 This project is licensed under the MIT License - see the 
 [LICENSE](LICENSE) file for details.
