@@ -31,6 +31,9 @@
 ### HeroArenaMeetTheCouncil
 0x59Fc35BF9AE78E7d7Be7Ccc6B45ab6A6dc5A5295 (BscTestnet)
 
+### HeroArenaMeetTheDarkElf
+0xB30723d0751417b2997a1C742149BD888043d7B6 (BscTestnet)
+
 ### HeroArenaBattle
 0x736BCa52Ccf97cA6f0b4947601C163cF87bC7C9F (BscTestnet)
 
