@@ -22,6 +22,9 @@ import { writeFile } from "node:fs/promises";
 const TGE_TIMESTAMP_RAW = 0; // TODO: set signed launch-document TGE timestamp, at least 1 hour in the future
 
 // Gnosis Safe 3-of-5 multisig — will receive DEFAULT_ADMIN_ROLE on all contracts
+const ADMIN_SIGNER      = "0x02334708A7069993fe7f14cdbfC9863AcF3598C4";
+
+// Gnosis Safe 3-of-5 multisig — will receive DEFAULT_ADMIN_ROLE on all contracts
 const ADMIN_MULTISIG    = "0x02334708A7069993fe7f14cdbfC9863AcF3598C4"; // TODO: real admin multisig
 
 // Independent guardian multisig — holds GUARDIAN_ROLE on HapTreasury only
@@ -34,10 +37,10 @@ const BENEFICIARIES = {
   // Liquidity & Listings is deposited into HapTreasury as a non-circulating reserve.
   INITIAL_LIQUIDITY: ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000010", // TODO: LP provisioning wallet
 
-  // 30 M — 20% at TGE, remaining 80% over 8 months; approved launchpad vault
+  // 40 M — 100% unlocked at TGE; approved launchpad vault
   PUBLIC_IDO:        ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000011", // TODO
 
-  // 25 M — 3-month cliff, 18-month release; signed strategic/incubator agreements
+  // 15 M — 3-month cliff, 18-month release; signed strategic/incubator agreements
   STRATEGIC:         ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000012", // TODO
 
   // 280 M — 3-month cliff, performance-based maximum budget over 72 months
@@ -72,7 +75,7 @@ const BENEFICIARIES = {
 const ONE_MONTH = 30n * 24n * 60n * 60n; // 30 days in seconds (bigint)
 const VESTING_FUND = parseEther("959000000");
 const LIQUIDITY_LISTINGS_RESERVE = parseEther("41000000");
-const EXPECTED_TGE_CIRCULATION = parseEther("22500000");
+const EXPECTED_TGE_CIRCULATION = parseEther("56500000");
 
 /** Right-pads a string to bytes32, matching ethers.encodeBytes32String() */
 const LABEL = (s: string): `0x${string}` =>
@@ -112,7 +115,7 @@ function validateConfig() {
     errors.push(`vesting schedules total ${formatEther(scheduled)} HAP, expected 959,000,000`);
   }
   if (tgeCirculation !== EXPECTED_TGE_CIRCULATION) {
-    errors.push(`TGE circulation ${formatEther(tgeCirculation)} HAP, expected 22,500,000`);
+    errors.push(`TGE circulation ${formatEther(tgeCirculation)} HAP, expected 56,500,000`);
   }
   if (scheduled + LIQUIDITY_LISTINGS_RESERVE !== parseEther("1000000000")) {
     errors.push("vesting plus Liquidity & Listings reserve does not equal 1,000,000,000 HAP");
@@ -150,16 +153,16 @@ function buildSchedules() {
     {
       label:       LABEL("PUBLIC_IDO"),
       beneficiary: BENEFICIARIES.PUBLIC_IDO,
-      total:       parseEther("30000000"),
-      tgeAmount:   parseEther("6000000"), // 20% at TGE
+      total:       parseEther("40000000"),
+      tgeAmount:   parseEther("40000000"), // 100% at TGE
       cliff:       0n,
-      vesting:     8n * ONE_MONTH,
+      vesting:     0n,
       revocable:   false,
     },
     {
       label:       LABEL("STRATEGIC"),
       beneficiary: BENEFICIARIES.STRATEGIC,
-      total:       parseEther("25000000"),
+      total:       parseEther("15000000"),
       tgeAmount:   0n,
       cliff:       3n * ONE_MONTH,
       vesting:     18n * ONE_MONTH,

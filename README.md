@@ -19,6 +19,9 @@
 ### HeroArenaMiningFactoryV1
 0xb66fdf2923BCEd95bA6A7f9dbE2D24Ca9468D423 (BscTestnet)
 
+### HeroArenaMiningFactoryV2
+0xD4afBDc683406193680C89926FAA9CA4a4255559 (BscTestnet)
+
 ### HeroArenaAvatars (NFT)
 0x0F90da4384670ff8be95e7940B2A09846C9160f3 (BscTestnet)
 
