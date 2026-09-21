@@ -20,9 +20,9 @@ import {
 } from "viem";
 
 const DEFAULTS = {
-  hapToken: "0xa4082103a3ccd5a0599e28f6e21c87a477f5e97f",
-  heroArenaProfile: "0x48B3f5Ea324d8e0AFaF63c8469f664Bc659B3bbc",
-  governanceAdmin: "0x02334708A7069993fe7f14cdbfC9863AcF3598C4",
+  hapToken: "0x4d46228f72de5f3f02418af796d4ff2c1ea03f72",
+  heroArenaProfile: "0xC9A37d565E6bb0F5EE5A5071F57F2f100D5dB621",
+  governanceAdmin: "0x81C00e62764551888861736E0C0f40e6E92001AC",
 } as const;
 
 function configuredAddress(variable: string, fallback: string): Address {

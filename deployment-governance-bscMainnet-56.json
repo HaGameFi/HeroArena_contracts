@@ -1,0 +1,53 @@
+{
+  "network": "bscMainnet",
+  "chainId": 56,
+  "deployedAt": "2026-09-19T11:18:45.883Z",
+  "deployer": "0x02334708A7069993fe7f14cdbfC9863AcF3598C4",
+  "governanceAdmin": "0x81C00e62764551888861736E0C0f40e6E92001AC",
+  "contracts": {
+    "HapToken": "0x4d46228f72DE5F3F02418af796D4fF2C1EA03f72",
+    "HeroArenaProfile": "0xC9A37d565E6bb0F5EE5A5071F57F2f100D5dB621",
+    "VotingEscrowHAP": "0xa9A868125aca990B0f7Abb02fec1C567ABe0dF12",
+    "VoteEventFactory": "0x1118d23A61E724ddde95B77Ff2Ec741E906bA158",
+    "VotingRewardVault": "0x6047028E0e6346BC814b67b6650A0F032184B8B1"
+  },
+  "constructorArguments": {
+    "VotingEscrowHAP": [
+      "0x4d46228f72DE5F3F02418af796D4fF2C1EA03f72"
+    ],
+    "VoteEventFactory": [
+      "0xa9A868125aca990B0f7Abb02fec1C567ABe0dF12",
+      "0xC9A37d565E6bb0F5EE5A5071F57F2f100D5dB621",
+      "0x81C00e62764551888861736E0C0f40e6E92001AC"
+    ],
+    "VotingRewardVault": [
+      "0x1118d23A61E724ddde95B77Ff2Ec741E906bA158",
+      "0x4d46228f72DE5F3F02418af796D4fF2C1EA03f72"
+    ]
+  },
+  "checks": {
+    "factoryEscrow": true,
+    "factoryProfile": true,
+    "factoryHap": true,
+    "factoryOwner": true,
+    "adminCanCreateEvents": true,
+    "vaultFactory": true,
+    "vaultHap": true
+  },
+  "hapBlacklistProtection": {
+    "complete": false,
+    "protectedContracts": [],
+    "pendingAdminCalls": [
+      {
+        "target": "0x4d46228f72DE5F3F02418af796D4fF2C1EA03f72",
+        "data": "0x8a7f997c000000000000000000000000a9a868125aca990b0f7abb02fec1c567abe0df120000000000000000000000000000000000000000000000000000000000000001",
+        "description": "HapToken.setProtected(0xa9A868125aca990B0f7Abb02fec1C567ABe0dF12, true) for VotingEscrowHAP"
+      },
+      {
+        "target": "0x4d46228f72DE5F3F02418af796D4fF2C1EA03f72",
+        "data": "0x8a7f997c0000000000000000000000006047028e0e6346bc814b67b6650a0f032184b8b10000000000000000000000000000000000000000000000000000000000000001",
+        "description": "HapToken.setProtected(0x6047028E0e6346BC814b67b6650A0F032184B8B1, true) for VotingRewardVault"
+      }
+    ]
+  }
+}

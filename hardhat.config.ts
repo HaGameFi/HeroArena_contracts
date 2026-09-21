@@ -50,12 +50,12 @@ export default defineConfig({
       url: configVariable("BSC_TESTNET_RPC_URL"),
       accounts: [configVariable("SEPOLIA_PRIVATE_KEY")],
     },
-    // bscMainnet: {
-    //   type: "http",
-    //   chainType: "l1",
-    //   url: configVariable("BSC_MAINNET_RPC_URL"),
-    //   accounts: [configVariable("BSC_PRIVATE_KEY")],
-    // },
+    bscMainnet: {
+      type: "http",
+      chainType: "l1",
+      url: "https://bsc-dataseed.binance.org/", //configVariable("BSC_MAINNET_RPC_URL"),
+      accounts: [configVariable("SEPOLIA_PRIVATE_KEY")],
+    },
   },
   verify: {
     etherscan: {

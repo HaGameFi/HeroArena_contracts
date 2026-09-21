@@ -156,26 +156,23 @@ contract HeroArenaMiningFactoryV2Test is Test {
         factoryV2.updateAvailableClaim(true);
 
         vm.startPrank(user);
-        factoryV2.mintNFT(30, NFT_PRICE);
+        factoryV2.mintNFT(0, NFT_PRICE);
         factoryV2.mintNFT(59, NFT_PRICE);
         vm.stopPrank();
 
         assertEq(avatars.balanceOf(user), 2);
-        assertEq(avatars.avatarCount(30), 1);
+        assertEq(avatars.avatarCount(0), 1);
         assertEq(avatars.avatarCount(59), 1);
         assertEq(hapToken.balanceOf(address(factoryV2)), NFT_PRICE * 2);
     }
 
-    function test_MintRejectsIdsOutsideV2Range() public {
+    function test_MintRejectsIdAtUpperBoundary() public {
         _migrateAndInitialize();
         factoryV2.updateAvailableClaim(true);
 
-        vm.startPrank(user);
-        vm.expectRevert("Input avatarId too low");
-        factoryV2.mintNFT(29, NFT_PRICE);
         vm.expectRevert("Input avatarId unavailable");
+        vm.prank(user);
         factoryV2.mintNFT(60, NFT_PRICE);
-        vm.stopPrank();
     }
 
     function test_MintHonorsCallerMaximumPrice() public {

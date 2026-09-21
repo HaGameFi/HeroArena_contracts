@@ -2,9 +2,9 @@ import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
 
 export default buildModule("HeroArenaMiningFactoryV2Module", (m) => {
   // NOTICE: No need deploy HeroArenaAvatars independently
-  const factory = m.contract("HeroArenaMiningFactoryV2", ["0xa4082103a3ccd5a0599e28f6e21c87a477f5e97f", "0x0F90da4384670ff8be95e7940B2A09846C9160f3", 10000000000000n]);
+  const factory = m.contract("HeroArenaMiningFactoryV2", ["0x4d46228f72de5f3f02418af796d4ff2c1ea03f72", "0x15D1130F633eD5C3ae68F9EE7205B0573527e434", 10000000000000n]);
 
-  m.call(factory, "updateNFTPrice", [50000000000000000000n]);
+  m.call(factory, "updateNFTPrice", [2000000000000000000000n]);
 
   // m.call(factory, "updateAvailableClaim", [true]);
   

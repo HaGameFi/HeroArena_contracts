@@ -19,53 +19,50 @@ import { writeFile } from "node:fs/promises";
 
 // TGE Unix timestamp (seconds). Must be in the future.
 // Compute: Math.floor(new Date("2026-09-01T12:00:00Z").getTime() / 1000)
-const TGE_TIMESTAMP_RAW = 0; // TODO: set signed launch-document TGE timestamp, at least 1 hour in the future
+const TGE_TIMESTAMP_RAW = Math.floor(new Date("2026-09-01T00:00:00Z").getTime() / 1000); // TODO: set signed launch-document TGE timestamp, at least 1 hour in the future
 
 // Gnosis Safe 3-of-5 multisig — will receive DEFAULT_ADMIN_ROLE on all contracts
-const ADMIN_SIGNER      = "0x02334708A7069993fe7f14cdbfC9863AcF3598C4";
-
-// Gnosis Safe 3-of-5 multisig — will receive DEFAULT_ADMIN_ROLE on all contracts
-const ADMIN_MULTISIG    = "0x02334708A7069993fe7f14cdbfC9863AcF3598C4"; // TODO: real admin multisig
+const ADMIN_MULTISIG    = "0x81C00e62764551888861736E0C0f40e6E92001AC"; // TODO: real admin multisig
 
 // Independent guardian multisig — holds GUARDIAN_ROLE on HapTreasury only
 // Must be a different address from ADMIN_MULTISIG
-const GUARDIAN_MULTISIG = "0xd861Af70b9414762873Ad7387b95E96c6f6E8140"; // TODO: real guardian multisig
+const GUARDIAN_MULTISIG = "0x43262ea12B3285fFE3f684998D2D13840c51A6c3"; // TODO: real guardian multisig
 
 // Vesting beneficiary addresses (one per token category)
 const BENEFICIARIES = {
   // 9 M — initial PancakeSwap liquidity released at TGE. The other 41 M of
   // Liquidity & Listings is deposited into HapTreasury as a non-circulating reserve.
-  INITIAL_LIQUIDITY: ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000010", // TODO: LP provisioning wallet
+  INITIAL_LIQUIDITY: "0xD10B1929b1480265f5B259C8938A68B52a47D55c", // TODO: LP provisioning wallet
 
   // 40 M — 100% unlocked at TGE; approved launchpad vault
-  PUBLIC_IDO:        ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000011", // TODO
+  PUBLIC_IDO:        "0xC47af4CEAeddF66f8091217265b21d60C3cDeC35", // TODO
 
   // 15 M — 3-month cliff, 18-month release; signed strategic/incubator agreements
-  STRATEGIC:         ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000012", // TODO
+  STRATEGIC:         "0xFA4Bc619B9eC15529502e7647e85FACE9C607c80", // TODO
 
   // 280 M — 3-month cliff, performance-based maximum budget over 72 months
-  PLAYER_REWARDS:    ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000013", // TODO: reward controller
+  PLAYER_REWARDS:    "0xB6BA4115b34ca55fA1680008838da98490A37428", // TODO: reward controller
 
   // 60 M — 3-month cliff, dynamic maximum budget over 48 months
-  STAKING_REWARDS:   ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000014", // TODO
+  STAKING_REWARDS:   "0xA6f2e7c4F6f7884A14C8ab840FA551604249988b", // TODO
 
   // 125 M — 3-month cliff, 48-month availability subject to partner milestones
-  ECOSYSTEM:         ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000015", // TODO
+  ECOSYSTEM:         "0x6aFa4C89d656DC9C152A30319d4a34A9AFE02525", // TODO
 
   // 150 M — 12-month cliff, 36-month linear; team multisig (revocable)
-  TEAM:              ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000016", // TODO
+  TEAM:              "0x11D4B5156C286AA8D44054339EC9F104A5541fd1", // TODO
 
   // 20 M — 6-month cliff, 24-month linear; advisors (revocable)
-  ADVISORS:          ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000017", // TODO
+  ADVISORS:          "0x1A11907016E1b8B5ce482325183f0c67a68f1F92", // TODO
 
   // 150 M — 12-month cliff, 48-month linear; protocol reserve multisig
-  TREASURY:          ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000018", // TODO
+  TREASURY:          "0x73DAE421db2331F478179574C9205780Af363719", // TODO
 
   // 70 M — 5% at TGE, remaining allocation over 24 months
-  MARKETING:         ADMIN_MULTISIG,//"0x0000000000000000000000000000000000000019", // TODO
+  MARKETING:         "0x35C882851E15ef0Bd9A2a41B1381665424F8a488", // TODO
 
   // 40 M — 10% at TGE, remaining allocation over 12 months
-  COMMUNITY:         ADMIN_MULTISIG,//"0x000000000000000000000000000000000000001a", // TODO
+  COMMUNITY:         "0x095860d2D379a2c1d4A3790817bB8D80DfceF98D", // TODO
 } as const;
 
 // ============================================================================

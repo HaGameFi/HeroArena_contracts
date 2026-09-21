@@ -30,7 +30,7 @@ contract HeroArenaMiningFactoryV2 is Ownable {
     // Price of HAP that a user needs to pay to for a NFT
     uint256 public nftPrice;
 
-    uint8 private constant MIN_AVATAR_ID = 30;
+    uint8 private constant MIN_AVATAR_ID = 0;
     uint8 private constant MAX_AVATAR_ID_EXCLUSIVE = 60;
 
     bool public avatarMetadataInitialized;

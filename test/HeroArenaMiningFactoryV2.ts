@@ -170,11 +170,11 @@ describe("HeroArenaMiningFactoryV2", async function () {
     const deployment = await deploy();
     await migrateAndInitialize(deployment);
     await deployment.factoryV2.write.updateAvailableClaim([true]);
-    await deployment.factoryV2.write.mintNFT([30, NFT_PRICE], { account: userClient.account });
+    await deployment.factoryV2.write.mintNFT([0, NFT_PRICE], { account: userClient.account });
     await deployment.factoryV2.write.mintNFT([59, NFT_PRICE], { account: userClient.account });
 
     assert.equal(await deployment.avatars.read.balanceOf([user]), 2n);
-    assert.equal(await deployment.avatars.read.avatarCount([30]), 1n);
+    assert.equal(await deployment.avatars.read.avatarCount([0]), 1n);
     assert.equal(await deployment.avatars.read.avatarCount([59]), 1n);
     assert.equal(
       await deployment.hapToken.read.balanceOf([deployment.factoryV2.address]),
@@ -182,14 +182,10 @@ describe("HeroArenaMiningFactoryV2", async function () {
     );
   });
 
-  it("rejects avatar IDs outside the V2 range", async function () {
+  it("rejects the first avatar ID above the supported range", async function () {
     const deployment = await deploy();
     await migrateAndInitialize(deployment);
     await deployment.factoryV2.write.updateAvailableClaim([true]);
-    await assert.rejects(
-      deployment.factoryV2.write.mintNFT([29, NFT_PRICE], { account: userClient.account }),
-      /Input avatarId too low/,
-    );
     await assert.rejects(
       deployment.factoryV2.write.mintNFT([60, NFT_PRICE], { account: userClient.account }),
       /Input avatarId unavailable/,
