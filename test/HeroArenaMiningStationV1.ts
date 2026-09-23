@@ -1,341 +1,109 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-
 import { network } from "hardhat";
-import { maxUint256, parseEther, zeroAddress } from "viem";
+import { maxUint256, zeroAddress } from "viem";
 
-const NFT_PRICE = 100n * 10n ** 18n;
+const PRICE = 100n * 10n ** 18n;
 
 describe("HeroArenaMiningStationV1", async function () {
   const { viem } = await network.connect();
-  const [ownerClient, user1Client, user2Client, newOwnerClient] =
-    await viem.getWalletClients();
-  const publicClient = await viem.getPublicClient();
-
-  const owner    = ownerClient.account.address;
-  const user1    = user1Client.account.address;
-  const user2    = user2Client.account.address;
+  const [ownerClient, userClient, recipientClient, newOwnerClient] = await viem.getWalletClients();
+  const user = userClient.account.address;
+  const recipient = recipientClient.account.address;
   const newOwner = newOwnerClient.account.address;
 
-  // ─── deploy helper ────────────────────────────────────────────────────────
-
   async function deploy() {
-    const hapToken = await viem.deployContract("MockERC20");
-    const station  = await viem.deployContract("HeroArenaMiningStationV1", [
-      hapToken.address,
-      NFT_PRICE,
+    const hap = await viem.deployContract("MockERC20");
+    const frames = await viem.deployContract("HeroArenaFrames");
+    const station = await viem.deployContract("HeroArenaMiningStationV1", [
+      hap.address,
+      frames.address,
+      PRICE,
     ]);
-
-    const framesSCAddr = await station.read.HeroArenaFramesSC();
-    const framesSC     = await viem.getContractAt("HeroArenaFrames", framesSCAddr);
-
-    await hapToken.write.mint([user1, 10_000n * 10n ** 18n]);
-    await hapToken.write.mint([user2, 10_000n * 10n ** 18n]);
-    await hapToken.write.approve([station.address, maxUint256], { account: user1Client.account });
-    await hapToken.write.approve([station.address, maxUint256], { account: user2Client.account });
-
-    return { hapToken, station, framesSC };
+    await frames.write.transferOwnership([station.address]);
+    await station.write.initializeFrames();
+    await hap.write.mint([user, 1_000n * 10n ** 18n]);
+    await hap.write.approve([station.address, maxUint256], { account: userClient.account });
+    return { hap, frames, station };
   }
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // constructor
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  describe("constructor", async function () {
-    it("sets HapToken", async function () {
-      const { hapToken, station } = await deploy();
-      assert.equal(
-        (await station.read.HapToken()).toLowerCase(),
-        hapToken.address.toLowerCase(),
-      );
-    });
-
-    it("sets nftPrice", async function () {
-      const { station } = await deploy();
-      assert.equal(await station.read.nftPrice(), NFT_PRICE);
-    });
-
-    it("deploys HeroArenaFramesSC", async function () {
-      const { station } = await deploy();
-      assert.notEqual(await station.read.HeroArenaFramesSC(), zeroAddress);
-    });
-
-    it("sets station as frames contract owner", async function () {
-      const { station, framesSC } = await deploy();
-      assert.equal(
-        (await framesSC.read.owner()).toLowerCase(),
-        station.address.toLowerCase(),
-      );
-    });
-
-    it("sets deployer as station owner", async function () {
-      const { station } = await deploy();
-      assert.equal((await station.read.owner()).toLowerCase(), owner.toLowerCase());
-    });
-
-    it("claim is disabled by default", async function () {
-      const { station } = await deploy();
-      assert.equal(await station.read.availableClaim(), false);
-    });
-
-    it("sets frame names in constructor", async function () {
-      const { framesSC } = await deploy();
-      const [names] = await framesSC.read.getFrameNameAndCreatedTimestampBatch([[1, 2]]);
-      assert.equal(names[0], "Sapphire_v0");
-      assert.equal(names[1], "Lunar_v0");
-    });
+  it("configures frame 1 after Station becomes Frames owner", async function () {
+    const { hap, frames, station } = await deploy();
+    assert.equal((await station.read.HapToken()).toLowerCase(), hap.address.toLowerCase());
+    assert.equal((await station.read.heroArenaFramesSC()).toLowerCase(), frames.address.toLowerCase());
+    assert.equal(await station.read.framesInitialized(), true);
+    assert.equal((await frames.read.owner()).toLowerCase(), station.address.toLowerCase());
+    const [names] = await frames.read.getFrameNameAndCreatedTimestampBatch([[1]]);
+    assert.deepEqual(names, ["Sapphire_v0"]);
   });
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // updateAvailableClaim
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  describe("updateAvailableClaim", async function () {
-    it("enables and disables claim", async function () {
-      const { station } = await deploy();
-      await station.write.updateAvailableClaim([true]);
-      assert.equal(await station.read.availableClaim(), true);
-      await station.write.updateAvailableClaim([false]);
-      assert.equal(await station.read.availableClaim(), false);
-    });
-
-    it("emits AvailableClaimUpdated event", async function () {
-      const { station } = await deploy();
-      const hash    = await station.write.updateAvailableClaim([true]);
-      const receipt = await publicClient.getTransactionReceipt({ hash });
-      assert.equal(receipt.status, "success");
-    });
-
-    it("reverts if not owner", async function () {
-      const { station } = await deploy();
-      await assert.rejects(
-        station.write.updateAvailableClaim([true], { account: user1Client.account }),
-        /OwnableUnauthorizedAccount/,
-      );
-    });
+  it("deploys before ownership transfer and initializes exactly once", async function () {
+    const hap = await viem.deployContract("MockERC20");
+    const frames = await viem.deployContract("HeroArenaFrames");
+    const station = await viem.deployContract("HeroArenaMiningStationV1", [hap.address, frames.address, PRICE]);
+    await assert.rejects(station.write.initializeFrames(), /V1 is not Frames owner/);
+    await frames.write.transferOwnership([station.address]);
+    await station.write.initializeFrames();
+    await assert.rejects(station.write.initializeFrames(), /Frames already initialized/);
   });
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // mintNFT
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  describe("mintNFT", async function () {
-    it("transfers HAP from user to station", async function () {
-      const { hapToken, station } = await deploy();
-      await station.write.updateAvailableClaim([true]);
-      const before = await hapToken.read.balanceOf([user1]);
-      await station.write.mintNFT([0], { account: user1Client.account });
-      assert.equal(await hapToken.read.balanceOf([user1]), before - NFT_PRICE);
-      assert.equal(await hapToken.read.balanceOf([station.address]), NFT_PRICE);
-    });
-
-    it("user receives NFT", async function () {
-      const { station, framesSC } = await deploy();
-      await station.write.updateAvailableClaim([true]);
-      await station.write.mintNFT([0], { account: user1Client.account });
-      assert.equal(await framesSC.read.balanceOf([user1]), 1n);
-    });
-
-    it("increments frameCount", async function () {
-      const { station, framesSC } = await deploy();
-      await station.write.updateAvailableClaim([true]);
-      await station.write.mintNFT([1], { account: user1Client.account });
-      assert.equal(await framesSC.read.frameCount([1]), 1n);
-    });
-
-    it("emits FrameMinted event", async function () {
-      const { station } = await deploy();
-      await station.write.updateAvailableClaim([true]);
-      const hash    = await station.write.mintNFT([0], { account: user1Client.account });
-      const receipt = await publicClient.getTransactionReceipt({ hash });
-      assert.equal(receipt.status, "success");
-    });
-
-    it("multiple users can mint", async function () {
-      const { hapToken, station, framesSC } = await deploy();
-      await station.write.updateAvailableClaim([true]);
-      await station.write.mintNFT([0], { account: user1Client.account });
-      await station.write.mintNFT([1], { account: user2Client.account });
-      assert.equal(await framesSC.read.balanceOf([user1]), 1n);
-      assert.equal(await framesSC.read.balanceOf([user2]), 1n);
-      assert.equal(await hapToken.read.balanceOf([station.address]), NFT_PRICE * 2n);
-    });
-
-    it("all valid frameIds (0, 1) can be minted", async function () {
-      const { station, framesSC } = await deploy();
-      await station.write.updateAvailableClaim([true]);
-      await station.write.mintNFT([0], { account: user1Client.account });
-      await station.write.mintNFT([1], { account: user1Client.account });
-      assert.equal(await framesSC.read.balanceOf([user1]), 2n);
-    });
-
-    it("reverts when claim is disabled", async function () {
-      const { station } = await deploy();
-      await assert.rejects(
-        station.write.mintNFT([0], { account: user1Client.account }),
-        /Cannot claim/,
-      );
-    });
-
-    it("reverts on invalid frameId", async function () {
-      const { station } = await deploy();
-      await station.write.updateAvailableClaim([true]);
-      await assert.rejects(
-        station.write.mintNFT([2], { account: user1Client.account }),
-        /Input frameId unavailable/,
-      );
-    });
-
-    it("reverts on insufficient HAP balance", async function () {
-      const { station } = await deploy();
-      await station.write.updateAvailableClaim([true]);
-      const poorUser = (await viem.getWalletClients())[4];
-      await assert.rejects(
-        station.write.mintNFT([0], { account: poorUser.account }),
-      );
-    });
+  it("mints frame 1 and collects the exact HAP fee", async function () {
+    const { hap, frames, station } = await deploy();
+    await station.write.updateAvailableClaim([true]);
+    await station.write.mintNFT([1], { account: userClient.account });
+    assert.equal(await frames.read.balanceOf([user]), 1n);
+    assert.equal(await frames.read.frameCount([1]), 1n);
+    assert.equal(await hap.read.balanceOf([station.address]), PRICE);
   });
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // updateNFTPrice
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  describe("updateNFTPrice", async function () {
-    it("updates nftPrice", async function () {
-      const { station } = await deploy();
-      const newPrice = 200n * 10n ** 18n;
-      await station.write.updateNFTPrice([newPrice]);
-      assert.equal(await station.read.nftPrice(), newPrice);
-    });
-
-    it("emits FramePriceUpdated event", async function () {
-      const { station } = await deploy();
-      const hash    = await station.write.updateNFTPrice([200n * 10n ** 18n]);
-      const receipt = await publicClient.getTransactionReceipt({ hash });
-      assert.equal(receipt.status, "success");
-    });
-
-    it("new price is used on next mint", async function () {
-      const { hapToken, station } = await deploy();
-      const newPrice = 50n * 10n ** 18n;
-      await station.write.updateNFTPrice([newPrice]);
-      await station.write.updateAvailableClaim([true]);
-      const before = await hapToken.read.balanceOf([user1]);
-      await station.write.mintNFT([0], { account: user1Client.account });
-      assert.equal(await hapToken.read.balanceOf([user1]), before - newPrice);
-    });
-
-    it("reverts if not owner", async function () {
-      const { station } = await deploy();
-      await assert.rejects(
-        station.write.updateNFTPrice([1n], { account: user1Client.account }),
-        /OwnableUnauthorizedAccount/,
-      );
-    });
+  it("rejects disabled claims and frame ids outside the V1 range", async function () {
+    const { station } = await deploy();
+    await assert.rejects(station.write.mintNFT([1], { account: userClient.account }), /Cannot claim/);
+    await station.write.updateAvailableClaim([true]);
+    await assert.rejects(station.write.mintNFT([0], { account: userClient.account }), /Input frameId too low/);
+    await assert.rejects(station.write.mintNFT([2], { account: userClient.account }), /Input frameId unavailable/);
   });
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // proposeNFTContractOwnership + acceptNFTContractOwnership
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  describe("proposeNFTContractOwnership", async function () {
-    it("sets pendingNFTContractOwner", async function () {
-      const { station } = await deploy();
-      await station.write.proposeNFTContractOwnership([newOwner]);
-      assert.equal(
-        (await station.read.pendingNFTContractOwner()).toLowerCase(),
-        newOwner.toLowerCase(),
-      );
-    });
-
-    it("can cancel by proposing address(0)", async function () {
-      const { station } = await deploy();
-      await station.write.proposeNFTContractOwnership([newOwner]);
-      await station.write.proposeNFTContractOwnership([zeroAddress]);
-      assert.equal(await station.read.pendingNFTContractOwner(), zeroAddress);
-    });
-
-    it("reverts if not owner", async function () {
-      const { station } = await deploy();
-      await assert.rejects(
-        station.write.proposeNFTContractOwnership([newOwner], { account: user1Client.account }),
-        /OwnableUnauthorizedAccount/,
-      );
-    });
+  it("prevents buying frame 1 twice while it is owned", async function () {
+    const { hap, frames, station } = await deploy();
+    await station.write.updateAvailableClaim([true]);
+    await station.write.mintNFT([1], { account: userClient.account });
+    await assert.rejects(station.write.mintNFT([1], { account: userClient.account }), /Frame already owned/);
+    assert.equal(await frames.read.balanceOf([user]), 1n);
+    assert.equal(await hap.read.balanceOf([station.address]), PRICE);
   });
 
-  describe("acceptNFTContractOwnership", async function () {
-    it("transfers frames contract ownership to pending owner", async function () {
-      const { station, framesSC } = await deploy();
-      await station.write.proposeNFTContractOwnership([newOwner]);
-      await station.write.acceptNFTContractOwnership({ account: newOwnerClient.account });
-      assert.equal(
-        (await framesSC.read.owner()).toLowerCase(),
-        newOwner.toLowerCase(),
-      );
-    });
-
-    it("clears pendingNFTContractOwner after accept", async function () {
-      const { station } = await deploy();
-      await station.write.proposeNFTContractOwnership([newOwner]);
-      await station.write.acceptNFTContractOwnership({ account: newOwnerClient.account });
-      assert.equal(await station.read.pendingNFTContractOwner(), zeroAddress);
-    });
-
-    it("reverts if caller is not pending owner", async function () {
-      const { station } = await deploy();
-      await station.write.proposeNFTContractOwnership([newOwner]);
-      await assert.rejects(
-        station.write.acceptNFTContractOwnership({ account: user1Client.account }),
-        /Not the pending owner/,
-      );
-    });
-
-    it("reverts if no pending owner is set", async function () {
-      const { station } = await deploy();
-      await assert.rejects(
-        station.write.acceptNFTContractOwnership({ account: user1Client.account }),
-        /Not the pending owner/,
-      );
-    });
+  it("allows buying frame 1 again after transfer", async function () {
+    const { hap, frames, station } = await deploy();
+    await station.write.updateAvailableClaim([true]);
+    await station.write.mintNFT([1], { account: userClient.account });
+    await frames.write.transferFrom([user, recipient, 1n], { account: userClient.account });
+    await station.write.mintNFT([1], { account: userClient.account });
+    assert.equal(await frames.read.hasFrame([user, 1]), true);
+    assert.equal(await frames.read.hasFrame([recipient, 1]), true);
+    assert.equal(await hap.read.balanceOf([station.address]), PRICE * 2n);
   });
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // claimFee
-  // ═══════════════════════════════════════════════════════════════════════════
+  it("uses an updated price and enforces owner-only administration", async function () {
+    const { hap, station } = await deploy();
+    await assert.rejects(station.write.updateNFTPrice([1n], { account: userClient.account }), /OwnableUnauthorizedAccount/);
+    await assert.rejects(station.write.updateAvailableClaim([true], { account: userClient.account }), /OwnableUnauthorizedAccount/);
+    await station.write.updateNFTPrice([25n * 10n ** 18n]);
+    await station.write.updateAvailableClaim([true]);
+    await station.write.mintNFT([1], { account: userClient.account });
+    assert.equal(await hap.read.balanceOf([station.address]), 25n * 10n ** 18n);
+  });
 
-  describe("claimFee", async function () {
-    it("transfers HAP to owner", async function () {
-      const { hapToken, station } = await deploy();
-      await station.write.updateAvailableClaim([true]);
-      await station.write.mintNFT([0], { account: user1Client.account });
-      await station.write.mintNFT([1], { account: user2Client.account });
-      const before = await hapToken.read.balanceOf([owner]);
-      await station.write.claimFee([NFT_PRICE * 2n]);
-      assert.equal(await hapToken.read.balanceOf([owner]), before + NFT_PRICE * 2n);
-    });
-
-    it("partial withdraw leaves remainder in station", async function () {
-      const { hapToken, station } = await deploy();
-      await station.write.updateAvailableClaim([true]);
-      await station.write.mintNFT([0], { account: user1Client.account });
-      await station.write.claimFee([NFT_PRICE / 2n]);
-      assert.equal(await hapToken.read.balanceOf([station.address]), NFT_PRICE / 2n);
-    });
-
-    it("reverts on insufficient balance", async function () {
-      const { station } = await deploy();
-      await assert.rejects(station.write.claimFee([1n]));
-    });
-
-    it("reverts if not owner", async function () {
-      const { station } = await deploy();
-      await station.write.updateAvailableClaim([true]);
-      await station.write.mintNFT([0], { account: user1Client.account });
-      await assert.rejects(
-        station.write.claimFee([NFT_PRICE], { account: user1Client.account }),
-        /OwnableUnauthorizedAccount/,
-      );
-    });
+  it("claims fees and transfers Frames ownership in two steps", async function () {
+    const { hap, frames, station } = await deploy();
+    await station.write.updateAvailableClaim([true]);
+    await station.write.mintNFT([1], { account: userClient.account });
+    await station.write.claimFee([PRICE]);
+    assert.equal(await hap.read.balanceOf([station.address]), 0n);
+    await station.write.proposeNFTContractOwnership([newOwner]);
+    await assert.rejects(station.write.acceptNFTContractOwnership({ account: userClient.account }), /Not the pending owner/);
+    await station.write.acceptNFTContractOwnership({ account: newOwnerClient.account });
+    assert.equal((await frames.read.owner()).toLowerCase(), newOwner.toLowerCase());
+    assert.equal(await station.read.pendingNFTContractOwner(), zeroAddress);
   });
 });

@@ -133,6 +133,18 @@ describe("HeroArenaMiningStationV0", async function () {
       await station.write.updateAvailableClaim([true]);
       await station.write.mintNFT([0], { account: user1Client.account });
       assert.equal(await framesSC.read.balanceOf([user1]), 1n);
+      assert.equal(await framesSC.read.hasFrame([user1, 0]), true);
+    });
+
+    it("hasFrame tracks the current owner after transfer", async function () {
+      const { station, framesSC } = await deploy();
+      await station.write.updateAvailableClaim([true]);
+      await station.write.mintNFT([0], { account: user1Client.account });
+      await framesSC.write.transferFrom([user1, user2, 1n], {
+        account: user1Client.account,
+      });
+      assert.equal(await framesSC.read.hasFrame([user1, 0]), false);
+      assert.equal(await framesSC.read.hasFrame([user2, 0]), true);
     });
 
     it("increments frameCount", async function () {

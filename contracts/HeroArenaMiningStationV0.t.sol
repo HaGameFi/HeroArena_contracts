@@ -122,6 +122,18 @@ contract HeroArenaMiningStationV0Test is Test {
         vm.prank(user1);
         station.mintNFT(0);
         assertEq(framesSC.balanceOf(user1), 1);
+        assertTrue(framesSC.hasFrame(user1, 0));
+    }
+
+    function test_HasFrameTracksTransfer() public {
+        station.updateAvailableClaim(true);
+        vm.startPrank(user1);
+        station.mintNFT(0);
+        framesSC.transferFrom(user1, user2, 1);
+        vm.stopPrank();
+
+        assertFalse(framesSC.hasFrame(user1, 0));
+        assertTrue(framesSC.hasFrame(user2, 0));
     }
 
     function test_MintNFT_IncrementsFrameCount() public {

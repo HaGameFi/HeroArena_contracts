@@ -58,6 +58,24 @@
 0x30595a4Be9F70256A1FD78a81Af4aCe351b6c2A9 (BscTestnet)
 0x6047028E0e6346BC814b67b6650A0F032184B8B1 (BscMainnet)
 
+### HeroArenaFrames
+0x44CE8a60fDd2c8cFAA32705dD0D3f2b8b567469f (BscMainnet)
+
+### HeroArenaMiningStationV0
+0xa28D126685F4cfeC2BB642E5f9bD01EDEED040f9 (BscMainnet)
+
+### HeroArenaMiningStationV1
+0x8f7a88cB86422e0b3842f4E45D8A2Be9D65F1639 (BscMainnet)
+
+### HeroArenaBattleFields
+0x189570aBd1886112Ed21029e10504d4EBbA49FAC (BscMainnet)
+
+### HeroArenaMiningBattleFieldV0
+0xcd6eb0eD2Cf25195E1e0b41b51CD3581A187ff29 (BscMainnet)
+
+### HeroArenaMiningBattleFieldV1
+0xc8861833b0ca87c3f6d701ae6d2bdEE5FfAaf48F (BscMainnet)
+
 ### AVATAR_ROLE
 0x4ad03022a30d74eec4387df6b3113797d5e272979263cc8e2f27b1c508217b6c
 

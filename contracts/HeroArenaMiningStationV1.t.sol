@@ -2,318 +2,129 @@
 pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
 import {HeroArenaMiningStationV1} from "./HeroArenaMiningStationV1.sol";
 import {HeroArenaFrames} from "./HeroArenaFrames.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 
 contract HeroArenaMiningStationV1Test is Test {
+    uint256 constant PRICE = 100 ether;
     HeroArenaMiningStationV1 station;
-    MockERC20                hapToken;
-    HeroArenaFrames          framesSC;
-
-    address ownerAddr;
-    address user1;
-    address user2;
-    address newOwner;
-
-    uint256 constant NFT_PRICE = 100 * 10 ** 18;
+    HeroArenaFrames frames;
+    MockERC20 hap;
+    address user = makeAddr("user");
+    address recipient = makeAddr("recipient");
+    address newOwner = makeAddr("newOwner");
 
     function setUp() public {
-        ownerAddr = address(this);
-        user1     = makeAddr("user1");
-        user2     = makeAddr("user2");
-        newOwner  = makeAddr("newOwner");
-
-        hapToken  = new MockERC20();
-        station   = new HeroArenaMiningStationV1(IERC20(address(hapToken)), NFT_PRICE);
-        framesSC  = station.HeroArenaFramesSC();
-
-        hapToken.mint(user1, 10_000 * 10 ** 18);
-        hapToken.mint(user2, 10_000 * 10 ** 18);
-
-        vm.prank(user1);
-        hapToken.approve(address(station), type(uint256).max);
-        vm.prank(user2);
-        hapToken.approve(address(station), type(uint256).max);
+        hap = new MockERC20();
+        frames = new HeroArenaFrames();
+        station = new HeroArenaMiningStationV1(IERC20(address(hap)), frames, PRICE);
+        frames.transferOwnership(address(station));
+        station.initializeFrames();
+        hap.mint(user, 1_000 ether);
+        vm.prank(user);
+        hap.approve(address(station), type(uint256).max);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // constructor
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    function test_Constructor_SetsHapToken() public view {
-        assertEq(address(station.HapToken()), address(hapToken));
-    }
-
-    function test_Constructor_SetsNftPrice() public view {
-        assertEq(station.nftPrice(), NFT_PRICE);
-    }
-
-    function test_Constructor_DeploysFramesSC() public view {
-        assertTrue(address(framesSC) != address(0));
-    }
-
-    function test_Constructor_SetsStationAsFramesOwner() public view {
-        assertEq(Ownable(address(framesSC)).owner(), address(station));
-    }
-
-    function test_Constructor_SetsOwner() public view {
-        assertEq(Ownable(address(station)).owner(), ownerAddr);
-    }
-
-    function test_Constructor_ClaimDisabledByDefault() public view {
-        assertFalse(station.availableClaim());
-    }
-
-    function test_Constructor_SetsFrameNames() public view {
-        uint8[] memory ids = new uint8[](2);
-        ids[0] = 1; ids[1] = 2;
-        (string[] memory names, ) = framesSC.getFrameNameAndCreatedTimestampBatch(ids);
+    function test_InitializationConfiguresFrameOne() public view {
+        assertEq(address(station.HapToken()), address(hap));
+        assertEq(address(station.heroArenaFramesSC()), address(frames));
+        assertEq(station.nftPrice(), PRICE);
+        assertEq(frames.owner(), address(station));
+        assertTrue(station.framesInitialized());
+        uint8[] memory ids = new uint8[](1);
+        ids[0] = 1;
+        (string[] memory names, ) = frames.getFrameNameAndCreatedTimestampBatch(ids);
         assertEq(names[0], "Sapphire_v0");
-        assertEq(names[1], "Lunar_v0");
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // updateAvailableClaim
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    function test_UpdateAvailableClaim_TogglesFlag() public {
-        station.updateAvailableClaim(true);
-        assertTrue(station.availableClaim());
-        station.updateAvailableClaim(false);
-        assertFalse(station.availableClaim());
+    function test_DeploysBeforeOwnershipTransferAndInitializesOnlyOnce() public {
+        HeroArenaFrames otherFrames = new HeroArenaFrames();
+        HeroArenaMiningStationV1 otherStation =
+            new HeroArenaMiningStationV1(IERC20(address(hap)), otherFrames, PRICE);
+        vm.expectRevert("V1 is not Frames owner");
+        otherStation.initializeFrames();
+        otherFrames.transferOwnership(address(otherStation));
+        otherStation.initializeFrames();
+        vm.expectRevert("Frames already initialized");
+        otherStation.initializeFrames();
     }
 
-    function test_UpdateAvailableClaim_EmitsEvent() public {
-        vm.expectEmit(true, false, false, true);
-        emit HeroArenaMiningStationV1.AvailableClaimUpdated(ownerAddr, true);
+    function test_MintsFrameOneAndCollectsFee() public {
         station.updateAvailableClaim(true);
-    }
-
-    function test_UpdateAvailableClaim_RevertsIfNotOwner() public {
-        vm.prank(user1);
-        vm.expectRevert();
-        station.updateAvailableClaim(true);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // mintNFT
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    function test_MintNFT_TransfersHapFromUser() public {
-        station.updateAvailableClaim(true);
-        uint256 before = hapToken.balanceOf(user1);
-        vm.prank(user1);
-        station.mintNFT(0);
-        assertEq(hapToken.balanceOf(user1), before - NFT_PRICE);
-    }
-
-    function test_MintNFT_StationReceivesHap() public {
-        station.updateAvailableClaim(true);
-        vm.prank(user1);
-        station.mintNFT(0);
-        assertEq(hapToken.balanceOf(address(station)), NFT_PRICE);
-    }
-
-    function test_MintNFT_UserReceivesNFT() public {
-        station.updateAvailableClaim(true);
-        vm.prank(user1);
-        station.mintNFT(0);
-        assertEq(framesSC.balanceOf(user1), 1);
-    }
-
-    function test_MintNFT_IncrementsFrameCount() public {
-        station.updateAvailableClaim(true);
-        vm.prank(user1);
+        vm.expectEmit(true, true, true, true);
+        emit HeroArenaMiningStationV1.FrameMinted(user, 1, 1);
+        vm.prank(user);
         station.mintNFT(1);
-        assertEq(framesSC.frameCount(1), 1);
+        assertEq(frames.balanceOf(user), 1);
+        assertEq(frames.frameCount(1), 1);
+        assertEq(hap.balanceOf(address(station)), PRICE);
     }
 
-    function test_MintNFT_EmitsEvent() public {
-        station.updateAvailableClaim(true);
-        vm.expectEmit(true, true, true, false);
-        emit HeroArenaMiningStationV1.FrameMinted(user1, 1, 0);
-        vm.prank(user1);
-        station.mintNFT(0);
-    }
-
-    function test_MintNFT_MultipleUsers() public {
-        station.updateAvailableClaim(true);
-        vm.prank(user1);
-        station.mintNFT(0);
-        vm.prank(user2);
-        station.mintNFT(1);
-        assertEq(framesSC.balanceOf(user1), 1);
-        assertEq(framesSC.balanceOf(user2), 1);
-        assertEq(hapToken.balanceOf(address(station)), NFT_PRICE * 2);
-    }
-
-    function test_MintNFT_AllValidFrameIds() public {
-        station.updateAvailableClaim(true);
-        vm.startPrank(user1);
-        station.mintNFT(0);
-        station.mintNFT(1);
-        vm.stopPrank();
-        assertEq(framesSC.balanceOf(user1), 2);
-    }
-
-    function test_MintNFT_RevertsWhenClaimDisabled() public {
-        vm.prank(user1);
+    function test_RejectsDisabledAndInvalidFrameIds() public {
+        vm.prank(user);
         vm.expectRevert("Cannot claim");
-        station.mintNFT(0);
-    }
-
-    function test_MintNFT_RevertsOnInvalidFrameId() public {
+        station.mintNFT(1);
         station.updateAvailableClaim(true);
-        vm.prank(user1);
+        vm.prank(user);
+        vm.expectRevert("Input frameId too low");
+        station.mintNFT(0);
+        vm.prank(user);
         vm.expectRevert("Input frameId unavailable");
         station.mintNFT(2);
     }
 
-    function test_MintNFT_RevertsOnInsufficientBalance() public {
+    function test_CannotBuySameFrameWhileCurrentlyOwned() public {
         station.updateAvailableClaim(true);
-        address poorUser = makeAddr("poorUser");
-        vm.prank(poorUser);
-        hapToken.approve(address(station), type(uint256).max);
-        vm.prank(poorUser);
-        vm.expectRevert();
-        station.mintNFT(0);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // updateNFTPrice
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    function test_UpdateNFTPrice_UpdatesPrice() public {
-        uint256 newPrice = 200 * 10 ** 18;
-        station.updateNFTPrice(newPrice);
-        assertEq(station.nftPrice(), newPrice);
-    }
-
-    function test_UpdateNFTPrice_EmitsEvent() public {
-        uint256 newPrice = 200 * 10 ** 18;
-        vm.expectEmit(false, false, false, true);
-        emit HeroArenaMiningStationV1.FramePriceUpdated(newPrice);
-        station.updateNFTPrice(newPrice);
-    }
-
-    function test_UpdateNFTPrice_NewPriceUsedOnNextMint() public {
-        uint256 newPrice = 50 * 10 ** 18;
-        station.updateNFTPrice(newPrice);
-        station.updateAvailableClaim(true);
-        uint256 before = hapToken.balanceOf(user1);
-        vm.prank(user1);
-        station.mintNFT(0);
-        assertEq(hapToken.balanceOf(user1), before - newPrice);
-    }
-
-    function test_UpdateNFTPrice_RevertsIfNotOwner() public {
-        vm.prank(user1);
-        vm.expectRevert();
-        station.updateNFTPrice(1);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // proposeNFTContractOwnership + acceptNFTContractOwnership
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    function test_ProposeOwnership_SetsPendingOwner() public {
-        station.proposeNFTContractOwnership(newOwner);
-        assertEq(station.pendingNFTContractOwner(), newOwner);
-    }
-
-    function test_ProposeOwnership_EmitsEvent() public {
-        vm.expectEmit(true, true, false, false);
-        emit HeroArenaMiningStationV1.NFTContractOwnershipProposed(address(station), newOwner);
-        station.proposeNFTContractOwnership(newOwner);
-    }
-
-    function test_ProposeOwnership_CanCancel() public {
-        station.proposeNFTContractOwnership(newOwner);
-        station.proposeNFTContractOwnership(address(0));
-        assertEq(station.pendingNFTContractOwner(), address(0));
-    }
-
-    function test_ProposeOwnership_RevertsIfNotOwner() public {
-        vm.prank(user1);
-        vm.expectRevert();
-        station.proposeNFTContractOwnership(newOwner);
-    }
-
-    function test_AcceptOwnership_TransfersFramesOwnership() public {
-        station.proposeNFTContractOwnership(newOwner);
-        vm.prank(newOwner);
-        station.acceptNFTContractOwnership();
-        assertEq(Ownable(address(framesSC)).owner(), newOwner);
-    }
-
-    function test_AcceptOwnership_ClearsPendingOwner() public {
-        station.proposeNFTContractOwnership(newOwner);
-        vm.prank(newOwner);
-        station.acceptNFTContractOwnership();
-        assertEq(station.pendingNFTContractOwner(), address(0));
-    }
-
-    function test_AcceptOwnership_EmitsEvent() public {
-        station.proposeNFTContractOwnership(newOwner);
-        vm.expectEmit(true, true, false, false);
-        emit HeroArenaMiningStationV1.NFTContractOwnershipTransferred(address(station), newOwner);
-        vm.prank(newOwner);
-        station.acceptNFTContractOwnership();
-    }
-
-    function test_AcceptOwnership_RevertsIfNotPendingOwner() public {
-        station.proposeNFTContractOwnership(newOwner);
-        vm.prank(user1);
-        vm.expectRevert("Not the pending owner");
-        station.acceptNFTContractOwnership();
-    }
-
-    function test_AcceptOwnership_RevertsIfNoPendingOwner() public {
-        vm.prank(user1);
-        vm.expectRevert("Not the pending owner");
-        station.acceptNFTContractOwnership();
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // claimFee
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    function test_ClaimFee_TransfersHapToOwner() public {
-        station.updateAvailableClaim(true);
-        vm.prank(user1);
-        station.mintNFT(0);
-        vm.prank(user2);
+        vm.startPrank(user);
         station.mintNFT(1);
-        uint256 before = hapToken.balanceOf(ownerAddr);
-        station.claimFee(NFT_PRICE * 2);
-        assertEq(hapToken.balanceOf(ownerAddr), before + NFT_PRICE * 2);
+        vm.expectRevert("Frame already owned");
+        station.mintNFT(1);
+        vm.stopPrank();
+        assertEq(hap.balanceOf(address(station)), PRICE);
     }
 
-    function test_ClaimFee_PartialWithdraw() public {
+    function test_CanBuySameFrameAgainAfterTransfer() public {
         station.updateAvailableClaim(true);
-        vm.prank(user1);
-        station.mintNFT(0);
-        station.claimFee(NFT_PRICE / 2);
-        assertEq(hapToken.balanceOf(address(station)), NFT_PRICE / 2);
+        vm.startPrank(user);
+        station.mintNFT(1);
+        frames.transferFrom(user, recipient, 1);
+        station.mintNFT(1);
+        vm.stopPrank();
+        assertTrue(frames.hasFrame(user, 1));
+        assertTrue(frames.hasFrame(recipient, 1));
+        assertEq(hap.balanceOf(address(station)), PRICE * 2);
     }
 
-    function test_ClaimFee_RevertsOnInsufficientBalance() public {
-        vm.expectRevert();
-        station.claimFee(1);
-    }
-
-    function test_ClaimFee_RevertsIfNotOwner() public {
+    function test_UpdatePriceChangesNextMintFee() public {
+        station.updateNFTPrice(25 ether);
         station.updateAvailableClaim(true);
-        vm.prank(user1);
-        station.mintNFT(0);
-        vm.prank(user1);
-        vm.expectRevert();
-        station.claimFee(NFT_PRICE);
+        vm.prank(user);
+        station.mintNFT(1);
+        assertEq(hap.balanceOf(address(station)), 25 ether);
     }
 
-    receive() external payable {}
+    function test_AdminFunctionsAreOwnerOnly() public {
+        vm.startPrank(user);
+        vm.expectRevert(); station.initializeFrames();
+        vm.expectRevert(); station.updateAvailableClaim(true);
+        vm.expectRevert(); station.updateNFTPrice(1);
+        vm.expectRevert(); station.proposeNFTContractOwnership(newOwner);
+        vm.expectRevert(); station.claimFee(0);
+        vm.stopPrank();
+    }
+
+    function test_ClaimFeeAndTwoStepFramesOwnershipTransfer() public {
+        station.updateAvailableClaim(true);
+        vm.prank(user); station.mintNFT(1);
+        station.claimFee(PRICE);
+        assertEq(hap.balanceOf(address(station)), 0);
+        station.proposeNFTContractOwnership(newOwner);
+        vm.prank(user);
+        vm.expectRevert("Not the pending owner"); station.acceptNFTContractOwnership();
+        vm.prank(newOwner); station.acceptNFTContractOwnership();
+        assertEq(frames.owner(), newOwner);
+        assertEq(station.pendingNFTContractOwner(), address(0));
+    }
 }

@@ -109,6 +109,22 @@ contract HeroArenaFrames is ERC721Enumerable, Ownable {
     }
 
     /**
+     * Returns whether an owner currently holds at least one token of a specific
+     * frameId. Transferred and burned tokens are automatically excluded because
+     * ERC721Enumerable only enumerates the owner's current tokens.
+     */
+    function hasFrame(address _owner, uint8 _frameId) external view returns (bool) {
+        uint256 balance = balanceOf(_owner);
+        for (uint256 i = 0; i < balance; i++) {
+            uint256 tokenId = tokenOfOwnerByIndex(_owner, i);
+            if (_frameIds[tokenId] == _frameId) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * To get a group of frames' names and timestamps
      */
     function getFrameNameAndCreatedTimestampBatch(uint8[] calldata _Ids) external view returns (string[] memory, uint256[] memory) {
