@@ -1,3 +1,5 @@
 {
-  "HeroArenaMiningStationV1Module#HeroArenaMiningStationV1": "0x8f7a88cB86422e0b3842f4E45D8A2Be9D65F1639"
+  "HeroArenaMiningStationV1Module#HeroArenaMiningStationV1": "0x8f7a88cB86422e0b3842f4E45D8A2Be9D65F1639",
+  "HeroArenaMiningBattleFieldV0Module#HeroArenaMiningBattleFieldV0": "0xcB52Fa3A8e0095B0B2019Aed5fa7A780B2C6E3F5",
+  "HeroArenaMiningBattleFieldV1Module#HeroArenaMiningBattleFieldV1": "0x30747e1b8383BE65324405454eD3608b3C2cF091"
 }

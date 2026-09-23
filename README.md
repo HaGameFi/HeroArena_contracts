@@ -68,10 +68,10 @@
 0x8f7a88cB86422e0b3842f4E45D8A2Be9D65F1639 (BscMainnet)
 
 ### HeroArenaBattleFields
-0x189570aBd1886112Ed21029e10504d4EBbA49FAC (BscMainnet)
+0x86e42E79F0d34804b719bBDD46E02EcCe12827a3 (BscMainnet)
 
 ### HeroArenaMiningBattleFieldV0
-0xcd6eb0eD2Cf25195E1e0b41b51CD3581A187ff29 (BscMainnet)
+0xcB52Fa3A8e0095B0B2019Aed5fa7A780B2C6E3F5 (BscMainnet)
 
 ### HeroArenaMiningBattleFieldV1
 0xc8861833b0ca87c3f6d701ae6d2bdEE5FfAaf48F (BscMainnet)

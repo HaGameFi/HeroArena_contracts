@@ -50,14 +50,14 @@ contract HeroArenaMiningBattleFieldV1 is Ownable {
         require(heroArenaBattleFieldsSC.owner() == address(this), "V1 is not BattleFields owner");
 
         battleFieldsInitialized = true;
-        heroArenaBattleFieldsSC.setBattleFieldNameAndCreatedTimestamp(2, "MapId002");
-        heroArenaBattleFieldsSC.setBattleFieldNameAndCreatedTimestamp(3, "MapId003");
-        heroArenaBattleFieldsSC.setBattleFieldNameAndCreatedTimestamp(4, "MapId004");
-        heroArenaBattleFieldsSC.setBattleFieldNameAndCreatedTimestamp(5, "MapId005");
-        heroArenaBattleFieldsSC.setBattleFieldNameAndCreatedTimestamp(6, "MapId006");
-        heroArenaBattleFieldsSC.setBattleFieldNameAndCreatedTimestamp(7, "MapId007");
-        heroArenaBattleFieldsSC.setBattleFieldNameAndCreatedTimestamp(8, "MapId008");
-        heroArenaBattleFieldsSC.setBattleFieldNameAndCreatedTimestamp(9, "MapId009");
+        heroArenaBattleFieldsSC.setBattleFieldNameAndCreatedTimestamp(2, "002");
+        heroArenaBattleFieldsSC.setBattleFieldNameAndCreatedTimestamp(3, "003");
+        heroArenaBattleFieldsSC.setBattleFieldNameAndCreatedTimestamp(4, "004");
+        heroArenaBattleFieldsSC.setBattleFieldNameAndCreatedTimestamp(5, "005");
+        heroArenaBattleFieldsSC.setBattleFieldNameAndCreatedTimestamp(6, "006");
+        heroArenaBattleFieldsSC.setBattleFieldNameAndCreatedTimestamp(7, "007");
+        heroArenaBattleFieldsSC.setBattleFieldNameAndCreatedTimestamp(8, "008");
+        heroArenaBattleFieldsSC.setBattleFieldNameAndCreatedTimestamp(9, "009");
 
         emit BattleFieldsInitialized(address(heroArenaBattleFieldsSC));
     }
@@ -80,10 +80,7 @@ contract HeroArenaMiningBattleFieldV1 is Ownable {
         require(battleFieldsInitialized, "BattleFields not initialized");
         require(_battleFieldId >= MIN_BATTLEFIELD_ID, "Input battleFieldId too low");
         require(_battleFieldId < MAX_BATTLEFIELD_ID_EXCLUSIVE, "Input battleFieldId unavailable");
-        require(
-            !heroArenaBattleFieldsSC.hasBattleField(msg.sender, _battleFieldId),
-            "BattleField already owned"
-        );
+        require(!_hasBattleField(msg.sender, _battleFieldId), "BattleField already owned");
 
         // Transfer HAP tokens to this contract
         HapToken.safeTransferFrom(msg.sender, address(this), nftPrice);
@@ -92,6 +89,23 @@ contract HeroArenaMiningBattleFieldV1 is Ownable {
 
         // emit event
         emit BattleFieldMinted(msg.sender, _tokenId, _battleFieldId);
+    }
+
+    /**
+     * @dev Use only query methods exposed by the already-deployed BattleFields
+     * contract. The mainnet deployment predates hasBattleField(address,uint8),
+     * so calling that newer helper would make every V1 purchase revert.
+     */
+    function _hasBattleField(address _owner, uint8 _battleFieldId) internal view returns (bool) {
+        uint256[] memory tokenIds = heroArenaBattleFieldsSC.getTokensByOwner(_owner);
+        uint8[] memory battleFieldIds = heroArenaBattleFieldsSC.getBattleFieldIdBatch(tokenIds);
+
+        for (uint256 i = 0; i < battleFieldIds.length; i++) {
+            if (battleFieldIds[i] == _battleFieldId) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
